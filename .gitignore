@@ -216,3 +216,5 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+# Reddit DB 파일 — Google Drive에서 관리
+reddit_data.db

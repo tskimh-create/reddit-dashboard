@@ -11,22 +11,36 @@ import streamlit as st
 from datetime import datetime, timedelta
 
 # ─────────────────────────────────────────
-# ★ 추가: Google Drive에서 DB 자동 다운로드
+# ★ Google Drive에서 DB 자동 다운로드 (안정화 버전)
 # ─────────────────────────────────────────
 import os
 import gdown
 
-DB_PATH      = "reddit_data.db"
-GDRIVE_FILE_ID = "1-nuBg81wfomyeCoqvF6JMURzSCBWM9Fz"  # ← Step 3에서 복사한 ID로 교체!
-GDRIVE_URL   = f"https://drive.google.com/uc?id={GDRIVE_FILE_ID}"
+DB_PATH        = "reddit_data.db"
+GDRIVE_FILE_ID = "여기에_파일ID_입력"   # ← 본인 파일 ID로 교체!
 
 @st.cache_resource(show_spinner="📥 데이터베이스 로딩 중...")
 def ensure_db():
-    """DB가 없거나 오래된 경우 Google Drive에서 자동 다운로드"""
     if not os.path.exists(DB_PATH):
-        st.toast("📥 DB를 Google Drive에서 다운로드 중입니다...")
-        gdown.download(GDRIVE_URL, DB_PATH, quiet=False, fuzzy=True)
-        st.toast("✅ DB 다운로드 완료!")
+        try:
+            # 방법 1: gdown 기본 방식
+            url = f"https://drive.google.com/uc?id={GDRIVE_FILE_ID}&export=download"
+            gdown.download(url, DB_PATH, quiet=False)
+        except Exception as e1:
+            try:
+                # 방법 2: fuzzy 방식 (gdown 최신버전)
+                url2 = f"https://drive.google.com/file/d/{GDRIVE_FILE_ID}/view"
+                gdown.download(url2, DB_PATH, quiet=False, fuzzy=True)
+            except Exception as e2:
+                st.error(f"""
+                ❌ DB 다운로드 실패.
+
+                **확인사항:**
+                1. Google Drive 파일 공유 → '링크가 있는 모든 사용자'로 설정됐는지 확인
+                2. 파일 ID가 정확한지 확인: `{GDRIVE_FILE_ID}`
+                3. 오류 상세: {e2}
+                """)
+                st.stop()
     return DB_PATH
 
 ensure_db()   # 앱 시작 시 자동 실행

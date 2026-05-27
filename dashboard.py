@@ -17,7 +17,7 @@ import os
 import gdown
 
 DB_PATH        = "reddit_data.db"
-GDRIVE_FILE_ID = "여기에_파일ID_입력"   # ← 본인 파일 ID로 교체!
+GDRIVE_FILE_ID = "1-nuBg81wfomyeCoqvF6JMURzSCBWM9Fz"   # ← 본인 파일 ID로 교체!
 
 @st.cache_resource(show_spinner="📥 데이터베이스 로딩 중...")
 def ensure_db():

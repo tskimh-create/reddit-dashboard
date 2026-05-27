@@ -17,7 +17,7 @@ import os
 import gdown
 
 DB_PATH      = "reddit_data.db"
-GDRIVE_FILE_ID = "1aBcDeFgHiJkLmNoPqRsTuVwXyZ"  # ← Step 3에서 복사한 ID로 교체!
+GDRIVE_FILE_ID = "1-nuBg81wfomyeCoqvF6JMURzSCBWM9Fz"  # ← Step 3에서 복사한 ID로 교체!
 GDRIVE_URL   = f"https://drive.google.com/uc?id={GDRIVE_FILE_ID}"
 
 @st.cache_resource(show_spinner="📥 데이터베이스 로딩 중...")

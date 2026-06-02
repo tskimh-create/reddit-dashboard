@@ -1,5 +1,9 @@
 """
-🌿 Reddit 화장품 시장조사 대시보드 v2.0
+🌿 Reddit 화장품 시장조사 대시보드 v4.0
+변경 이력:
+  v2.0 - Google Drive DB 자동 다운로드
+  v3.0 - 탭 순서 재정렬 + 소비자 VOC 분석 탭 추가
+  v4.0 - [개선] permalink 실링크 연동 / 지역 그룹 필터 / 기본정보 탭 추가
 """
 
 import sqlite3
@@ -23,12 +27,10 @@ GDRIVE_FILE_ID = "1-nuBg81wfomyeCoqvF6JMURzSCBWM9Fz"   # ← 본인 파일 ID로
 def ensure_db():
     if not os.path.exists(DB_PATH):
         try:
-            # 방법 1: gdown 기본 방식
             url = f"https://drive.google.com/uc?id={GDRIVE_FILE_ID}&export=download"
             gdown.download(url, DB_PATH, quiet=False)
         except Exception as e1:
             try:
-                # 방법 2: fuzzy 방식 (gdown 최신버전)
                 url2 = f"https://drive.google.com/file/d/{GDRIVE_FILE_ID}/view"
                 gdown.download(url2, DB_PATH, quiet=False, fuzzy=True)
             except Exception as e2:
@@ -43,11 +45,7 @@ def ensure_db():
                 st.stop()
     return DB_PATH
 
-ensure_db()   # 앱 시작 시 자동 실행
-
-# ─────────────────────────────────────────
-# 이하 기존 코드 그대로 유지
-# ─────────────────────────────────────────
+ensure_db()
 
 # ─────────────────────────────────────────
 # 0. 페이지 기본 설정
@@ -60,7 +58,7 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────
-# 공통 CSS (고급 스타일)
+# 공통 CSS
 # ─────────────────────────────────────────
 st.markdown("""
 <style>
@@ -71,7 +69,6 @@ html, body, [class*="css"] {
 }
 h1, h2, h3 { font-family: 'DM Serif Display', serif; }
 
-/* 카드 스타일 */
 .metric-card {
     background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
     border: 1px solid #0f3460;
@@ -92,7 +89,6 @@ h1, h2, h3 { font-family: 'DM Serif Display', serif; }
     margin-top: 6px;
 }
 
-/* 섹션 헤더 */
 .section-header {
     background: linear-gradient(90deg, #0f3460, #533483);
     color: white;
@@ -103,7 +99,6 @@ h1, h2, h3 { font-family: 'DM Serif Display', serif; }
     font-weight: 600;
 }
 
-/* Top 게시글 카드 */
 .post-card {
     background: #f8f9fa;
     border-left: 4px solid #e94560;
@@ -114,6 +109,27 @@ h1, h2, h3 { font-family: 'DM Serif Display', serif; }
 .post-card .ptitle { font-weight: 600; font-size: 0.95rem; color: #1a1a2e; }
 .post-card .pmeta  { font-size: 0.8rem; color: #718096; margin-top: 4px; }
 .post-card .pscore { font-weight: 700; color: #e94560; }
+
+/* VOC 탭 전용 */
+.voc-header {
+    background: linear-gradient(135deg, #1a1a2e, #16213e);
+    color: white;
+    padding: 14px 20px;
+    border-radius: 10px;
+    margin-bottom: 16px;
+}
+.voc-header h3 { margin: 0; font-size: 1rem; font-family: 'DM Serif Display', serif; }
+.voc-header p  { margin: 4px 0 0 0; opacity: .8; font-size: .85rem; }
+.urs-card {
+    background: #fff8f0;
+    border-left: 4px solid #e94560;
+    border-radius: 0 8px 8px 0;
+    padding: 10px 14px;
+    margin: 6px 0;
+}
+.urs-card .uc-title { font-weight: 600; font-size: 0.9rem; color: #1a1a2e; }
+.urs-card .uc-meta  { font-size: 0.78rem; color: #718096; margin-top: 3px; }
+.urs-card .uc-score { font-weight: 700; color: #e94560; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -122,13 +138,11 @@ h1, h2, h3 { font-family: 'DM Serif Display', serif; }
 # ─────────────────────────────────────────
 DB_PATH = "reddit_data.db"
 
-@st.cache_data(ttl=300)  # 5분 캐시
+@st.cache_data(ttl=300)
 def load_data():
-    """DB에서 모든 데이터 로드"""
     try:
         conn = sqlite3.connect(DB_PATH)
 
-        # ── 메인 게시글
         posts = pd.read_sql_query("""
             SELECT id, reddit_id, subreddit, title, selftext,
                    score, upvote_ratio, num_comments,
@@ -136,11 +150,11 @@ def load_data():
                    total_awards_received, num_crossposts,
                    is_gallery, is_self,
                    created_utc, fetch_date, fetch_type,
-                   region, priority_rank
+                   region, priority_rank,
+                   permalink, url
             FROM reddit_posts
         """, conn)
 
-        # ── 키워드 히트
         keywords = pd.read_sql_query("""
             SELECT kh.post_id, kh.keyword, kh.keyword_category,
                    kh.match_field, kh.matched_date, kh.matched_term,
@@ -151,9 +165,7 @@ def load_data():
             JOIN reddit_posts rp ON kh.post_id = rp.id
         """, conn)
 
-        # ── 서브레딧 메타
         meta = pd.read_sql_query("SELECT * FROM subreddits_meta", conn)
-
         conn.close()
         return posts, keywords, meta
 
@@ -164,9 +176,49 @@ def load_data():
 
 posts_df, keywords_df, meta_df = load_data()
 
-# 날짜 변환
 posts_df["fetch_date"] = pd.to_datetime(posts_df["fetch_date"], errors="coerce")
 posts_df["created_dt"] = pd.to_datetime(posts_df["created_utc"], unit="s", errors="coerce")
+
+# ─────────────────────────────────────────
+# 지역 그룹 매핑 (region 컬럼 값 → 6개 상위 그룹)
+# 실제 DB의 region 값에 맞게 키워드를 추가/수정하세요.
+# ─────────────────────────────────────────
+REGION_GROUP_MAP = {
+    "글로벌·범용":          ["범용", "mass", "general", "다인종", "원료 데이터", "global_general", "표준"],
+    "글로벌·전문소비자":    ["전문", "expert", "diy", "연구", "고관여", "가성비", "enthusiast"],
+    "글로벌·특정타깃":      ["타깃", "target", "시니어", "senior", "고소득", "k-beauty", "미세연지", "온도"],
+    "글로벌·피부고민":      ["피부고민", "skin_concern", "acne", "호르몬", "지성", "트러블", "여드름"],
+    "북미/유럽·오세아니아": ["north", "europe", "usa", "uk", "australia", "canada", "western",
+                            "서구", "북미", "유럽", "호주", "뉴질", "영국"],
+    "아시아·태평양":        ["asia", "pacific", "korea", "japan", "china", "india",
+                            "southeast", "singapore", "아시아", "태평양", "동남아", "인도", "싱가"],
+}
+
+def get_region_group(region_val):
+    """region 값을 6개 그룹 중 하나로 분류. 매핑 불가 시 '미분류' 반환."""
+    if pd.isna(region_val) or str(region_val).strip() == "":
+        return "미분류"
+    rv = str(region_val).lower()
+    for group, keywords in REGION_GROUP_MAP.items():
+        if any(kw.lower() in rv for kw in keywords):
+            return group
+    return "미분류"
+
+posts_df["region_group"] = posts_df["region"].apply(get_region_group)
+
+# permalink → 완전한 Reddit URL 생성
+def make_reddit_url(row):
+    """permalink 컬럼이 있으면 사용, 없으면 subreddit+reddit_id로 대체 URL 생성."""
+    pl = row.get("permalink", "")
+    if pl and str(pl) not in ("", "nan", "None"):
+        return f"https://www.reddit.com{pl}"
+    rid = row.get("reddit_id", "")
+    sub = row.get("subreddit", "")
+    if rid and sub:
+        return f"https://www.reddit.com/r/{sub}/comments/{rid}/"
+    return ""
+
+posts_df["reddit_url"] = posts_df.apply(make_reddit_url, axis=1)
 
 # ─────────────────────────────────────────
 # 2. 사이드바 — 필터
@@ -174,33 +226,66 @@ posts_df["created_dt"] = pd.to_datetime(posts_df["created_utc"], unit="s", error
 st.sidebar.markdown("## 🌿 Reddit 인사이트\n**화장품 시장조사 대시보드**")
 st.sidebar.markdown("---")
 
-# 수집 유형 필터
-fetch_types = ["전체"] + sorted(posts_df["fetch_type"].dropna().unique().tolist())
-sel_fetch = st.sidebar.selectbox("📅 수집 유형", fetch_types)
+# ── 수집 기간 필터 ──────────────────────────────────
+st.sidebar.markdown("**📅 수집 기간**")
+period_mode = st.sidebar.radio("", ["전체(누계)", "기간 선택"], horizontal=True, label_visibility="collapsed")
+if period_mode == "기간 선택":
+    available_years  = sorted(posts_df["fetch_date"].dt.year.dropna().unique().astype(int).tolist(), reverse=True)
+    sel_year  = st.sidebar.selectbox("연도", available_years)
+    available_months = ["전체"] + [f"{m:02d}" for m in sorted(
+        posts_df[posts_df["fetch_date"].dt.year == sel_year]["fetch_date"].dt.month.dropna().unique().astype(int).tolist()
+    )]
+    sel_month = st.sidebar.selectbox("월", available_months)
+else:
+    sel_year = sel_month = None
 
-# 지역 필터
-regions = ["전체"] + sorted(posts_df["region"].dropna().unique().tolist())
-sel_region = st.sidebar.selectbox("🌏 지역", regions)
+# ── 지역 그룹 필터 ─────────────────────────────────
+st.sidebar.markdown("---")
+st.sidebar.markdown("**🌏 지역 그룹**")
+rg_options = ["전체"] + [g for g in REGION_GROUP_MAP.keys()] + ["미분류"]
+sel_rgroup = st.sidebar.selectbox("지역 그룹 선택", rg_options, label_visibility="collapsed")
 
-# 서브레딧 필터
+# 그룹 선택 후 하위 지역 필터
+if sel_rgroup != "전체":
+    region_in_group = sorted(
+        posts_df[posts_df["region_group"] == sel_rgroup]["region"].dropna().unique().tolist()
+    )
+    region_options = ["전체"] + region_in_group
+else:
+    region_options = ["전체"] + sorted(posts_df["region"].dropna().unique().tolist())
+
+sel_region = st.sidebar.selectbox("└ 세부 지역", region_options, label_visibility="visible")
+
+# ── 서브레딧 필터 ───────────────────────────────────
+st.sidebar.markdown("---")
 subreddits = ["전체"] + sorted(posts_df["subreddit"].dropna().unique().tolist())
 sel_sub = st.sidebar.selectbox("📌 서브레딧", subreddits)
 
-# 최소 스코어 필터
+# ── Score 필터 ──────────────────────────────────────
 min_score = st.sidebar.slider("⭐ 최소 Score", 0, int(posts_df["score"].max() or 1000), 0, 10)
 
 st.sidebar.markdown("---")
-st.sidebar.caption(f"🗄️ DB 경로: `{DB_PATH}`")
-st.sidebar.caption(f"🕐 마지막 갱신: {posts_df['fetch_date'].max().strftime('%Y-%m-%d %H:%M') if not posts_df.empty else '-'}")
+st.sidebar.caption(f"🗄️ DB: `{DB_PATH}`")
+st.sidebar.caption(f"🕐 최근 수집: {posts_df['fetch_date'].max().strftime('%Y-%m-%d') if not posts_df.empty else '-'}")
+st.sidebar.caption(f"📦 총 {len(posts_df):,}건 · {posts_df['subreddit'].nunique()}개 서브레딧")
 
-# 필터 적용
+# ── 필터 적용 ───────────────────────────────────────
 filtered = posts_df.copy()
-if sel_fetch != "전체":
-    filtered = filtered[filtered["fetch_type"] == sel_fetch]
+# 수집 기간
+if period_mode == "기간 선택" and sel_year:
+    filtered = filtered[filtered["fetch_date"].dt.year == sel_year]
+    if sel_month != "전체":
+        filtered = filtered[filtered["fetch_date"].dt.month == int(sel_month)]
+# 지역 그룹
+if sel_rgroup != "전체":
+    filtered = filtered[filtered["region_group"] == sel_rgroup]
+# 세부 지역
 if sel_region != "전체":
     filtered = filtered[filtered["region"] == sel_region]
+# 서브레딧
 if sel_sub != "전체":
     filtered = filtered[filtered["subreddit"] == sel_sub]
+# 최소 Score
 filtered = filtered[filtered["score"] >= min_score]
 
 # ─────────────────────────────────────────
@@ -210,7 +295,7 @@ st.markdown("# 🌿 Reddit 화장품 시장 인사이트 대시보드")
 st.markdown(f"> 글로벌 뷰티 커뮤니티 **{len(posts_df['subreddit'].unique())}개 서브레딧** 데이터 분석 | 총 **{len(posts_df):,}건** 수집")
 
 # ─────────────────────────────────────────
-# 4. KPI 카드 (상단 요약)
+# 4. KPI 카드
 # ─────────────────────────────────────────
 st.markdown("---")
 c1, c2, c3, c4, c5 = st.columns(5)
@@ -220,28 +305,24 @@ with c1:
         <div class='val'>{len(filtered):,}</div>
         <div class='lbl'>총 게시글 수</div>
     </div>""", unsafe_allow_html=True)
-
 with c2:
     avg_score = int(filtered["score"].mean()) if not filtered.empty else 0
     st.markdown(f"""<div class='metric-card'>
         <div class='val'>{avg_score:,}</div>
         <div class='lbl'>평균 Score</div>
     </div>""", unsafe_allow_html=True)
-
 with c3:
     total_comments = int(filtered["num_comments"].sum()) if not filtered.empty else 0
     st.markdown(f"""<div class='metric-card'>
         <div class='val'>{total_comments:,}</div>
         <div class='lbl'>총 댓글 수</div>
     </div>""", unsafe_allow_html=True)
-
 with c4:
     kw_count = len(keywords_df) if not keywords_df.empty else 0
     st.markdown(f"""<div class='metric-card'>
         <div class='val'>{kw_count:,}</div>
         <div class='lbl'>키워드 히트</div>
     </div>""", unsafe_allow_html=True)
-
 with c5:
     sub_count = filtered["subreddit"].nunique() if not filtered.empty else 0
     st.markdown(f"""<div class='metric-card'>
@@ -252,14 +333,16 @@ with c5:
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────
-# 5. 탭 구성
+# 5. 탭 구성 (v3.0 순서: 중요도 기준)
 # ─────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab_voc, tab3, tab5, tab4, tab6 = st.tabs([
     "📊 트렌드 대시보드",
     "🧪 성분 키워드 인사이트",
+    "💬 소비자 VOC 분석",
     "🌏 지역별 비교",
+    "🎯 마케팅 기법 12",
     "📋 원본 데이터",
-    "🎯 마케팅 기법 12"
+    "📌 기본정보",
 ])
 
 # ═══════════════════════════════════════════
@@ -274,22 +357,25 @@ with tab1:
 
     for i, row in top10.iterrows():
         ratio_pct = f"{row['upvote_ratio']*100:.0f}%" if pd.notna(row['upvote_ratio']) else "-"
+        url       = row.get("reddit_url", "")
+        title_str = str(row['title'])[:100] + ('...' if len(str(row['title'])) > 100 else '')
+        title_html = (f'<a href="{url}" target="_blank" style="color:#1a1a2e;text-decoration:none;">'
+                      f'{title_str}</a>') if url else title_str
         st.markdown(f"""
         <div class='post-card'>
-            <div class='ptitle'>#{i+1} &nbsp; {row['title'][:100]}{'...' if len(str(row['title'])) > 100 else ''}</div>
+            <div class='ptitle'>#{i+1} &nbsp; {title_html}</div>
             <div class='pmeta'>
                 r/{row['subreddit']} &nbsp;|&nbsp;
-                지역: {row['region']} &nbsp;|&nbsp;
+                지역: {row['region']} ({row.get('region_group','')}) &nbsp;|&nbsp;
                 <span class='pscore'>⭐ {int(row['score']):,}</span> &nbsp;|&nbsp;
                 💬 {int(row['num_comments']):,} &nbsp;|&nbsp;
                 👍 {ratio_pct}
+                {f'&nbsp;|&nbsp; <a href="{url}" target="_blank" style="font-size:0.75rem;color:#718096;">원문 ↗</a>' if url else ''}
             </div>
         </div>
         """, unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
-
-    # ── 서브레딧별 게시글 수 & 평균 스코어
     st.markdown("<div class='section-header'>📌 서브레딧별 활동 현황</div>", unsafe_allow_html=True)
 
     col_a, col_b = st.columns(2)
@@ -323,7 +409,6 @@ with tab1:
         fig2.update_layout(height=500)
         st.plotly_chart(fig2, use_container_width=True)
 
-    # ── 업보트 비율 분포
     st.markdown("<div class='section-header'>👍 업보트 비율 분포</div>", unsafe_allow_html=True)
 
     valid_ratio = filtered["upvote_ratio"].dropna()
@@ -364,7 +449,6 @@ with tab2:
         """)
 
     else:
-        # 키워드 데이터 있을 때
         st.markdown("<div class='section-header'>🧪 성분 키워드 언급 순위 (Score 가중)</div>", unsafe_allow_html=True)
 
         kw_agg = keywords_df.groupby("keyword").agg(
@@ -398,7 +482,6 @@ with tab2:
             fig_kw2.update_layout(height=500)
             st.plotly_chart(fig_kw2, use_container_width=True)
 
-        # ── 카테고리별
         if "keyword_category" in keywords_df.columns:
             st.markdown("<div class='section-header'>📂 카테고리별 트렌드</div>", unsafe_allow_html=True)
 
@@ -415,6 +498,231 @@ with tab2:
             )
             fig_cat.update_layout(height=400)
             st.plotly_chart(fig_cat, use_container_width=True)
+
+# ═══════════════════════════════════════════
+# TAB VOC : 소비자 VOC 분석
+# (불만사항 · 개선요청 · URS 우선순위 매트릭스)
+# ═══════════════════════════════════════════
+with tab_voc:
+
+    st.markdown("""
+    <div class='voc-header'>
+        <h3>💬 소비자 VOC 분석 — 불만사항 & 개선 요청</h3>
+        <p>Reddit 게시글 제목·본문(selftext)에서 소비자 불만·개선 요청을 자동 감지·분류합니다.<br>
+        <b>URS (User Requirement Specification)</b>: 소비자가 제품에 요구하는 기능·성능·특성을 체계적으로 정리한 사양서.
+        하단의 우선순위 매트릭스로 즉시 개선 과제를 도출합니다.</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── 불만 키워드 사전 ──────────────────────────────────
+    COMPLAINT_DICT = {
+        "밀림·뭉침": ["pilling", "pills", "rub off", "ball up", "peeling off", "flakes off"],
+        "자극·트러블": ["irritation", "irritated", "stings", "burning", "breakout", "purge",
+                   "purging", "flare", "redness", "rash", "reaction", "allergic"],
+        "건조·당김": ["dry", "tight", "flaky", "dehydrated", "peeling", "dryness", "flaking"],
+        "번들거림·과잉분비": ["oily", "greasy", "shiny", "sebum", "excess oil", "slippery"],
+        "막힘·모공·블랙헤드": ["clogged", "clogs", "pores", "blackhead", "blackheads",
+                          "congested", "congestion", "comedone"],
+        "색소·잡티": ["hyperpigmentation", "dark spots", "melasma", "uneven",
+                  "discoloration", "pigmentation"],
+        "냄새·텍스처 불쾌": ["smell", "smells", "sticky", "tacky", "heavy texture",
+                        "thick", "goopy", "fragrance"],
+        "효과 없음": ["doesn't work", "no effect", "useless", "waste", "disappointed",
+                  "overhyped", "overrated"],
+    }
+
+    # ── 개선 요청 키워드 사전 ─────────────────────────────
+    IMPROVEMENT_DICT = {
+        "성분 개선 요청": ["wish it had", "needs more", "should add", "would be better with",
+                     "improve formula", "better formula", "reformulate"],
+        "용량·패키징 개선": ["packaging", "pump", "dispenser", "tube", "jar", "too small",
+                      "bigger size", "refill", "travel size"],
+        "가격 개선 요청": ["too expensive", "price drop", "overpriced", "cheaper",
+                     "affordable", "dupe", "budget friendly"],
+        "향·색 개선": ["fragrance free", "no scent", "unscented", "color", "tint", "shade"],
+        "발림성·흡수 개선": ["takes too long", "absorb faster", "lighter texture",
+                       "more lightweight", "less sticky", "lighter formula"],
+        "민감성 배려": ["sensitive skin", "gentle", "non-irritating",
+                   "hypoallergenic", "fragrance free version"],
+    }
+
+    # ── 집계 함수 ────────────────────────────────────────
+    def count_voc(df, kw_dict, label_col):
+        results = []
+        for cat, terms in kw_dict.items():
+            pattern = "|".join(terms)
+            m_title = df[df["title"].str.contains(pattern, case=False, na=False)]
+            m_body  = df[df["selftext"].str.contains(pattern, case=False, na=False)]
+            matched = pd.concat([m_title, m_body]).drop_duplicates(subset="id")
+            results.append({
+                label_col:        cat,
+                "언급 게시글":    len(matched),
+                "평균 Score":     round(matched["score"].mean(), 1) if len(matched) > 0 else 0,
+                "총 댓글":        int(matched["num_comments"].sum()) if len(matched) > 0 else 0,
+                "검색어(예시)":   ", ".join(terms[:3]) + ("…" if len(terms) > 3 else ""),
+            })
+        return pd.DataFrame(results).sort_values("언급 게시글", ascending=False)
+
+    complaint_df = count_voc(filtered, COMPLAINT_DICT,  "불만 유형")
+    improve_df   = count_voc(filtered, IMPROVEMENT_DICT, "개선 요청 유형")
+
+    # ══ 섹션 1: 불만사항 ══════════════════════════════════
+    st.markdown("<div class='section-header'>😤 불만사항 분석 (Complaints)</div>", unsafe_allow_html=True)
+
+    col_c1, col_c2 = st.columns(2)
+    with col_c1:
+        fig_comp = px.bar(
+            complaint_df, x="언급 게시글", y="불만 유형",
+            orientation="h", color="평균 Score",
+            color_continuous_scale="RdYlGn_r",
+            title="불만 유형별 언급 게시글 수",
+            labels={"불만 유형": "불만 유형", "언급 게시글": "게시글 수"}
+        )
+        fig_comp.update_layout(height=380, yaxis={"categoryorder": "total ascending"})
+        st.plotly_chart(fig_comp, use_container_width=True)
+
+    with col_c2:
+        st.dataframe(
+            complaint_df[["불만 유형", "언급 게시글", "평균 Score", "총 댓글", "검색어(예시)"]],
+            use_container_width=True, hide_index=True, height=350
+        )
+
+    # 상위 불만 유형 실제 게시글 샘플
+    if not complaint_df.empty and complaint_df["언급 게시글"].max() > 0:
+        top_comp_cat = complaint_df.iloc[0]["불만 유형"]
+        top_terms    = COMPLAINT_DICT[top_comp_cat]
+        pattern      = "|".join(top_terms)
+        sample_comp  = filtered[
+            filtered["title"].str.contains(pattern, case=False, na=False) |
+            filtered["selftext"].str.contains(pattern, case=False, na=False)
+        ].nlargest(5, "score")[["subreddit", "title", "score", "num_comments", "upvote_ratio"]]
+
+        st.markdown(f"**💡 '{top_comp_cat}' 관련 고득점 게시글 — 카피라이팅 & 제품 개선 소스**")
+        for _, row in sample_comp.iterrows():
+            ratio_pct = f"{row['upvote_ratio']*100:.0f}%" if pd.notna(row['upvote_ratio']) else "-"
+            st.markdown(f"""
+            <div class='post-card'>
+                <div class='ptitle'>📌 {row['title']}</div>
+                <div class='pmeta'>r/{row['subreddit']} &nbsp;|&nbsp;
+                    <span class='pscore'>⭐ {int(row['score']):,}</span>
+                    &nbsp;|&nbsp; 💬 {int(row['num_comments']):,}
+                    &nbsp;|&nbsp; 👍 {ratio_pct}
+                </div>
+            </div>""", unsafe_allow_html=True)
+    else:
+        st.info("현재 필터 조건에서 감지된 불만 게시글이 없습니다. 필터를 조정해 보세요.")
+
+    # ══ 섹션 2: 개선 요청 ════════════════════════════════
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<div class='section-header'>✅ 개선 요청 분석 (Improvement Requests)</div>", unsafe_allow_html=True)
+
+    col_i1, col_i2 = st.columns(2)
+    with col_i1:
+        fig_imp = px.bar(
+            improve_df, x="언급 게시글", y="개선 요청 유형",
+            orientation="h", color="평균 Score",
+            color_continuous_scale="Blues",
+            title="개선 요청 유형별 언급 게시글 수",
+            labels={"개선 요청 유형": "요청 유형", "언급 게시글": "게시글 수"}
+        )
+        fig_imp.update_layout(height=340, yaxis={"categoryorder": "total ascending"})
+        st.plotly_chart(fig_imp, use_container_width=True)
+
+    with col_i2:
+        st.dataframe(
+            improve_df[["개선 요청 유형", "언급 게시글", "평균 Score", "총 댓글"]],
+            use_container_width=True, hide_index=True, height=310
+        )
+
+    # 상위 개선 요청 게시글 샘플
+    if not improve_df.empty and improve_df["언급 게시글"].max() > 0:
+        top_imp_cat = improve_df.iloc[0]["개선 요청 유형"]
+        top_i_terms = IMPROVEMENT_DICT[top_imp_cat]
+        pattern_i   = "|".join(top_i_terms)
+        sample_imp  = filtered[
+            filtered["title"].str.contains(pattern_i, case=False, na=False) |
+            filtered["selftext"].str.contains(pattern_i, case=False, na=False)
+        ].nlargest(3, "score")[["subreddit", "title", "score", "num_comments"]]
+
+        st.markdown(f"**💡 '{top_imp_cat}' 관련 상위 게시글**")
+        for _, row in sample_imp.iterrows():
+            st.markdown(f"""
+            <div class='post-card'>
+                <div class='ptitle'>📌 {row['title']}</div>
+                <div class='pmeta'>r/{row['subreddit']} &nbsp;|&nbsp;
+                    <span class='pscore'>⭐ {int(row['score']):,}</span>
+                    &nbsp;|&nbsp; 💬 {int(row['num_comments']):,}
+                </div>
+            </div>""", unsafe_allow_html=True)
+
+    # ══ 섹션 3: URS 우선순위 매트릭스 ═══════════════════
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<div class='section-header'>📋 URS 우선순위 매트릭스 — 제품 개선 과제 도출</div>", unsafe_allow_html=True)
+
+    st.markdown("""
+    > **URS 매트릭스 계산 방식:** `우선순위 점수 = 언급 게시글 수 × 평균 Score`
+    > 언급이 많고 참여도(Score)도 높은 불만일수록 소비자 체감 강도가 강한 핵심 개선 과제입니다.
+    """)
+
+    complaint_df["우선순위 점수"] = (
+        complaint_df["언급 게시글"] * complaint_df["평균 Score"]
+    ).round(0)
+
+    col_u1, col_u2 = st.columns([3, 2])
+    with col_u1:
+        fig_urs = px.scatter(
+            complaint_df,
+            x="언급 게시글", y="평균 Score",
+            size="우선순위 점수",
+            text="불만 유형",
+            color="우선순위 점수",
+            color_continuous_scale="RdYlGn_r",
+            title="URS 우선순위 매트릭스 (크기 = 우선순위 점수)",
+            labels={
+                "언급 게시글": "언급 빈도 (게시글 수)",
+                "평균 Score":  "참여도 (평균 Score)"
+            }
+        )
+        fig_urs.update_traces(textposition="top center", textfont_size=9)
+        fig_urs.update_layout(height=420)
+        st.plotly_chart(fig_urs, use_container_width=True)
+
+    with col_u2:
+        top_urs = (
+            complaint_df
+            .nlargest(5, "우선순위 점수")
+            [["불만 유형", "언급 게시글", "평균 Score", "우선순위 점수"]]
+            .reset_index(drop=True)
+        )
+        top_urs.index += 1
+
+        st.markdown("**🔴 즉시 개선 필요 — Top 5**")
+        for i, row in top_urs.iterrows():
+            label = "🔴" if i == 1 else ("🟠" if i == 2 else "🟡")
+            st.markdown(f"""
+            <div class='urs-card'>
+                <div class='uc-title'>{label} {i}위. {row['불만 유형']}</div>
+                <div class='uc-meta'>
+                    언급 {int(row['언급 게시글'])}건 &nbsp;|&nbsp;
+                    평균 Score <span class='uc-score'>{row['평균 Score']:,.0f}</span>
+                </div>
+                <div class='uc-meta'>우선순위 점수: <b>{row['우선순위 점수']:,.0f}</b></div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    # 불만 + 개선 합산 요약 메트릭
+    st.markdown("<br>", unsafe_allow_html=True)
+    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+    total_comp_posts = int(complaint_df["언급 게시글"].sum())
+    total_imp_posts  = int(improve_df["언급 게시글"].sum())
+    with col_m1:
+        st.metric("감지된 불만 게시글", f"{total_comp_posts:,}건")
+    with col_m2:
+        st.metric("불만 유형 수", f"{len(complaint_df)}개")
+    with col_m3:
+        st.metric("개선 요청 게시글", f"{total_imp_posts:,}건")
+    with col_m4:
+        st.metric("개선 요청 유형 수", f"{len(improve_df)}개")
 
 # ═══════════════════════════════════════════
 # TAB 3 : 지역별 비교
@@ -451,7 +759,6 @@ with tab3:
         )
         st.plotly_chart(fig_r2, use_container_width=True)
 
-    # ── 아시아 vs 북미 상세 비교
     st.markdown("<div class='section-header'>🔍 아시아 vs 북미 상세 비교</div>", unsafe_allow_html=True)
 
     asia_regions = ["Asia", "korea", "japan", "china", "southeast_asia"]
@@ -479,7 +786,6 @@ with tab3:
     with col_d:
         region_top_subs(na_df, "🇺🇸 북미 — 인기 서브레딧 Top 10")
 
-    # ── 지역별 서브레딧 히트맵
     st.markdown("<div class='section-header'>🗺️ 지역 × 서브레딧 활동 히트맵</div>", unsafe_allow_html=True)
 
     try:
@@ -487,7 +793,6 @@ with tab3:
             index="region", columns="subreddit",
             values="score", aggfunc="sum", fill_value=0
         )
-        # 상위 20개 서브레딧만
         top_cols = pivot.sum().nlargest(20).index
         pivot = pivot[top_cols]
 
@@ -503,7 +808,6 @@ with tab3:
     except Exception as e:
         st.warning(f"히트맵 생성 중 오류: {e}")
 
-    # ── 지역별 우선순위 분포
     if "priority_rank" in filtered.columns:
         st.markdown("<div class='section-header'>⭐ 지역별 우선순위 분포</div>", unsafe_allow_html=True)
         pri_agg = filtered.groupby(["region", "priority_rank"]).size().reset_index(name="count")
@@ -513,38 +817,6 @@ with tab3:
             labels={"region": "지역", "count": "게시글 수", "priority_rank": "우선순위"}
         )
         st.plotly_chart(fig_pri, use_container_width=True)
-
-# ═══════════════════════════════════════════
-# TAB 4 : 원본 데이터
-# ═══════════════════════════════════════════
-with tab4:
-    st.markdown("<div class='section-header'>📋 수집 데이터 테이블</div>", unsafe_allow_html=True)
-
-    cols_show = [c for c in [
-        "subreddit", "title", "score", "num_comments",
-        "upvote_ratio", "region", "fetch_type", "fetch_date",
-        "link_flair_text", "author"
-    ] if c in filtered.columns]
-
-    st.dataframe(
-        filtered[cols_show].sort_values("score", ascending=False),
-        use_container_width=True,
-        height=500
-    )
-
-    # CSV 다운로드
-    csv = filtered[cols_show].to_csv(index=False, encoding="utf-8-sig")
-    st.download_button(
-        "⬇️ CSV 다운로드",
-        data=csv,
-        file_name=f"reddit_cosmetics_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-        mime="text/csv"
-    )
-
-    # ── 서브레딧 메타 정보
-    if not meta_df.empty:
-        st.markdown("<div class='section-header'>📌 서브레딧 메타 정보</div>", unsafe_allow_html=True)
-        st.dataframe(meta_df, use_container_width=True, height=300)
 
 # ═══════════════════════════════════════════
 # TAB 5 : 마케팅 기법 12
@@ -562,7 +834,6 @@ with tab5:
     </div>
     """, unsafe_allow_html=True)
 
-    # ── 12기법 종합 비교표
     with st.expander("📊 12개 기법 종합 비교표 (클릭해서 열기)", expanded=False):
         overview_data = {
             "영역": ["A.콘텐츠","A.콘텐츠","A.콘텐츠",
@@ -603,13 +874,9 @@ with tab5:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ════════════════════════════════════════
-    # 영역 A : 콘텐츠 마케팅
-    # ════════════════════════════════════════
     st.markdown("<div class='section-header'>🅐 영역 A. 콘텐츠 마케팅 — \"소비자가 쓰는 말로 말하라\"</div>",
                 unsafe_allow_html=True)
 
-    # ── 기법 1 : VOC 미러링 카피라이팅
     with st.expander("📝 기법 1 — VOC 미러링 카피라이팅 | 광고 CTR +20~40% 기대", expanded=True):
         st.markdown("""
         > **개념:** score ≥ 500 + upvote_ratio ≥ 0.9 게시글의 실제 소비자 언어를 광고 카피로 전환.
@@ -642,7 +909,6 @@ with tab5:
                 </div>
                 """, unsafe_allow_html=True)
 
-            # 서브레딧 분포
             fig_voc = px.bar(
                 voc_df.groupby("subreddit").size().reset_index(name="건수").sort_values("건수", ascending=False),
                 x="subreddit", y="건수", color="건수",
@@ -652,7 +918,6 @@ with tab5:
             fig_voc.update_layout(height=300)
             st.plotly_chart(fig_voc, use_container_width=True)
 
-    # ── 기법 2 : 트렌드 선점 콘텐츠 캘린더
     with st.expander("📅 기법 2 — 트렌드 선점 콘텐츠 캘린더 | SEO 유입 +30%", expanded=False):
         st.markdown("""
         > **개념:** 키워드별 가중 트렌드 지수(Score × upvote_ratio × log댓글)를 계산해
@@ -663,14 +928,12 @@ with tab5:
             st.warning("keyword_hits 데이터가 없습니다. keyword_matcher.py를 먼저 실행하세요.")
         else:
             import numpy as np
-
             kw_trend = keywords_df.copy()
             kw_trend["weighted_index"] = (
                 kw_trend["score"] *
                 kw_trend["upvote_ratio"].fillna(0.75) *
                 np.log1p(kw_trend["num_comments"])
             )
-
             kw_summary = kw_trend.groupby(["keyword","keyword_category"]).agg(
                 언급수=("keyword","count"),
                 가중트렌드지수=("weighted_index","sum"),
@@ -688,32 +951,21 @@ with tab5:
                 )
                 fig_trend.update_layout(height=550, yaxis={"categoryorder":"total ascending"})
                 st.plotly_chart(fig_trend, use_container_width=True)
-
             with col_t2:
                 fig_trend2 = px.scatter(
                     kw_summary, x="언급수", y="가중트렌드지수",
                     size="평균Score", color="keyword_category",
                     hover_name="keyword",
                     title="언급수 vs 가중 트렌드 지수 버블차트",
-                    labels={"언급수":"언급 횟수","가중트렌드지수":"가중 트렌드 지수"}
                 )
                 fig_trend2.update_layout(height=550)
                 st.plotly_chart(fig_trend2, use_container_width=True)
 
-            st.markdown("**🗓️ 콘텐츠 캘린더 추천 (가중 트렌드 지수 Top 5)**")
-            top5 = kw_summary.head(5).reset_index(drop=True)
-            for i, row in top5.iterrows():
-                st.markdown(f"""
-                **{i+1}위. `{row['keyword']}`** ({row['keyword_category']})
-                — 가중지수 **{row['가중트렌드지수']:,.0f}** | 언급 {int(row['언급수'])}건
-                → 📌 즉시 콘텐츠 기획 착수 권장
-                """)
-
-    # ── 기법 3 : 언메트 니즈 스토리텔링
     with st.expander("💔 기법 3 — 언메트 니즈 스토리텔링 | 브랜드 공감도 극대화", expanded=False):
         st.markdown("""
         > **개념:** 소비자들이 selftext에 털어놓는 해결 안 되는 불편함을 찾아
         > 제품 탄생 스토리로 역전시킵니다.
+        > 💡 **팁:** 'VOC 분석' 탭의 불만사항 데이터와 함께 활용하세요.
         """)
 
         PAIN_WORDS = {
@@ -752,34 +1004,29 @@ with tab5:
         with col_p2:
             st.dataframe(pain_df, use_container_width=True, hide_index=True, height=280)
 
-        # 최상위 고민의 실제 게시글 샘플
-        top_pain = pain_df.iloc[0]["고민 유형"]
-        top_terms = PAIN_WORDS[top_pain]
-        sample_posts = posts_df[
-            posts_df["selftext"].str.contains("|".join(top_terms), case=False, na=False)
-        ].nlargest(3, "score")[["subreddit","title","score","num_comments"]]
+        if not pain_df.empty and pain_df["언급 게시글 수"].max() > 0:
+            top_pain  = pain_df.iloc[0]["고민 유형"]
+            top_terms = PAIN_WORDS[top_pain]
+            sample_posts = posts_df[
+                posts_df["selftext"].str.contains("|".join(top_terms), case=False, na=False)
+            ].nlargest(3, "score")[["subreddit","title","score","num_comments"]]
 
-        st.markdown(f"**💡 스토리텔링 소스 — '{top_pain}' 관련 고득점 게시글**")
-        for _, row in sample_posts.iterrows():
-            st.markdown(f"""
-            <div class='post-card'>
-                <div class='ptitle'>📌 {row['title']}</div>
-                <div class='pmeta'>r/{row['subreddit']} &nbsp;|&nbsp;
-                    <span class='pscore'>⭐ {int(row['score']):,}</span>
-                    &nbsp;|&nbsp; 💬 {int(row['num_comments']):,}</div>
-            </div>""", unsafe_allow_html=True)
+            st.markdown(f"**💡 스토리텔링 소스 — '{top_pain}' 관련 고득점 게시글**")
+            for _, row in sample_posts.iterrows():
+                st.markdown(f"""
+                <div class='post-card'>
+                    <div class='ptitle'>📌 {row['title']}</div>
+                    <div class='pmeta'>r/{row['subreddit']} &nbsp;|&nbsp;
+                        <span class='pscore'>⭐ {int(row['score']):,}</span>
+                        &nbsp;|&nbsp; 💬 {int(row['num_comments']):,}</div>
+                </div>""", unsafe_allow_html=True)
 
-    # ════════════════════════════════════════
-    # 영역 B : 제품/원료 포지셔닝
-    # ════════════════════════════════════════
     st.markdown("<div class='section-header'>🅑 영역 B. 제품·원료 포지셔닝 — \"데이터가 증명하는 차별화\"</div>",
                 unsafe_allow_html=True)
 
-    # ── 기법 4 : 성분 신호등 포지셔닝
     with st.expander("🚦 기법 4 — 성분 신호등 포지셔닝 | 브랜드 신뢰도 혁신", expanded=True):
         st.markdown("""
         > **개념:** 성분별 upvote_ratio로 🟢그린(안전)·🟡옐로(관찰)·🔴레드(위험)를 분류.
-        > \"커뮤니티가 검증한 성분만 씁니다\"라는 메시지는 일반 광고와 차원이 다른 신뢰를 만듭니다.
         """)
 
         if keywords_df.empty:
@@ -791,7 +1038,7 @@ with tab5:
                 평균업보트비율=("upvote_ratio","mean"),
                 총Score=("score","sum"),
             ).reset_index()
-            sig_agg = sig_agg[sig_agg["언급수"] >= 2]  # 최소 2건 이상
+            sig_agg = sig_agg[sig_agg["언급수"] >= 2]
 
             def signal(r):
                 if r >= 0.88: return "🟢 그린 (즉시 도입)"
@@ -812,7 +1059,6 @@ with tab5:
                         "🔴 레드 (도입 보류)": "#ef4444"
                     },
                     title="성분 안전성 신호등 차트",
-                    labels={"평균업보트비율":"평균 업보트 비율","평균Score":"평균 Score"}
                 )
                 fig_sig.add_vline(x=0.88, line_dash="dash", line_color="green", annotation_text="그린 기준(0.88)")
                 fig_sig.add_vline(x=0.75, line_dash="dash", line_color="orange", annotation_text="옐로 기준(0.75)")
@@ -824,17 +1070,10 @@ with tab5:
                     subset = sig_agg[sig_agg["신호등"] == signal_label].sort_values("총Score", ascending=False)
                     st.markdown(f"**{signal_label}** — {len(subset)}개 성분")
                     if not subset.empty:
-                        kws = ", ".join(subset.head(6)["keyword"].tolist())
-                        st.caption(kws)
+                        st.caption(", ".join(subset.head(6)["keyword"].tolist()))
                     st.markdown("---")
 
-    # ── 기법 5 : 경쟁사 레드 신호 역이용
     with st.expander("⚔️ 기법 5 — 경쟁사 레드 신호 역이용 | 경쟁사 약점 → 자사 기회", expanded=False):
-        st.markdown("""
-        > **개념:** 카테고리별 논란 게시글(upvote_ratio < 0.6)을 찾아 해당 이슈를
-        > 자사 차별화 포지셔닝으로 전환합니다.
-        """)
-
         NEG_WORDS = ["pilling","breakout","irritation","stings","burning","bad","worst",
                      "avoid","terrible","hate","doesn't work","useless","rash","reaction"]
         neg_pattern = "|".join(NEG_WORDS)
@@ -846,37 +1085,6 @@ with tab5:
         controversy_posts["부정어포함"] = controversy_posts["selftext"].str.contains(
             neg_pattern, case=False, na=False)
 
-        if not keywords_df.empty:
-            cat_controversy = keywords_df[keywords_df["upvote_ratio"] < 0.65].groupby("keyword_category").agg(
-                논란게시글수=("post_id","nunique"),
-                평균업보트비율=("upvote_ratio","mean"),
-            ).reset_index().sort_values("논란게시글수", ascending=False)
-
-            col_c1, col_c2 = st.columns(2)
-            with col_c1:
-                fig_con = px.bar(
-                    cat_controversy, x="논란게시글수", y="keyword_category",
-                    orientation="h", color="평균업보트비율",
-                    color_continuous_scale="RdYlGn",
-                    title="카테고리별 논란 게시글 수 (업보트 비율 < 0.65)",
-                    labels={"keyword_category":"카테고리","논란게시글수":"논란 게시글 수"}
-                )
-                fig_con.update_layout(height=350, yaxis={"categoryorder":"total ascending"})
-                st.plotly_chart(fig_con, use_container_width=True)
-
-            with col_c2:
-                st.markdown("**🎯 역이용 포지셔닝 전략 매트릭스**")
-                for _, row in cat_controversy.head(5).iterrows():
-                    ratio = row["평균업보트비율"]
-                    if ratio < 0.55:
-                        action = "🔴 즉시 차별화 → '○○없는 대안' 메시지"
-                    else:
-                        action = "🟡 모니터링 → 교육 콘텐츠 선제 발행"
-                    st.markdown(f"**{row['keyword_category']}** (평균 {ratio:.0%})\n→ {action}")
-                    st.markdown("---")
-        else:
-            st.info("keyword_hits 데이터가 필요합니다.")
-
         st.markdown(f"**📊 저점 지지 게시글 현황** (Score≥50, 업보트비율<0.65): {len(controversy_posts)}건")
         if not controversy_posts.empty:
             st.dataframe(
@@ -885,13 +1093,7 @@ with tab5:
                 use_container_width=True, hide_index=True, height=280
             )
 
-    # ── 기법 6 : 클리메이트 포뮬러 마케팅
     with st.expander("🌍 기법 6 — 클리메이트 포뮬러 마케팅 | 수출 시장 전환율 극대화", expanded=False):
-        st.markdown("""
-        > **개념:** 지역별 서브레딧 상위 이슈와 성분을 연결해
-        > 수출 타깃 국가별 맞춤 포뮬러를 마케팅 자산으로 전환합니다.
-        """)
-
         if keywords_df.empty:
             st.warning("keyword_hits 데이터가 필요합니다.")
         else:
@@ -909,37 +1111,16 @@ with tab5:
             fig_climate = px.imshow(
                 pivot_climate,
                 color_continuous_scale="YlOrRd",
-                title="🌏 지역 × 성분 카테고리 Score 히트맵 (수출 포뮬러 전략 맵)",
-                labels={"color":"총 Score"},
+                title="🌏 지역 × 성분 카테고리 Score 히트맵",
                 aspect="auto"
             )
             fig_climate.update_layout(height=400)
             st.plotly_chart(fig_climate, use_container_width=True)
 
-            # 지역별 TOP 3 성분 카테고리
-            st.markdown("**🏆 지역별 최고 관심 성분 카테고리 Top 3**")
-            regions_list = climate_agg["region"].unique()
-            cols = st.columns(min(len(regions_list), 4))
-            for i, reg in enumerate(regions_list[:4]):
-                reg_top = climate_agg[climate_agg["region"] == reg].nlargest(3, "총Score")
-                with cols[i]:
-                    st.markdown(f"**🌏 {reg}**")
-                    for _, row in reg_top.iterrows():
-                        st.markdown(f"• {row['keyword_category']} ({int(row['총Score']):,})")
-
-    # ════════════════════════════════════════
-    # 영역 C : 타깃 마케팅
-    # ════════════════════════════════════════
     st.markdown("<div class='section-header'>🅒 영역 C. 타깃 마케팅 — \"세그먼트별 맞춤 공략\"</div>",
                 unsafe_allow_html=True)
 
-    # ── 기법 7 : KOL 발굴
     with st.expander("⭐ 기법 7 — 커뮤니티 인증 KOL 발굴 | 팔로워 수 아닌 영향력 기준", expanded=True):
-        st.markdown("""
-        > **개념:** total_awards_received ≥ 1인 작성자 = 팔로워 수가 아닌
-        > 실제 커뮤니티 영향력 기반 KOL. 협업 단가가 낮고 신뢰도는 높습니다.
-        """)
-
         award_df = filtered[filtered["total_awards_received"] >= 1].copy()
 
         if award_df.empty:
@@ -959,68 +1140,20 @@ with tab5:
                     kol_df.head(15), x="총어워드", y="author",
                     orientation="h", color="총Score",
                     color_continuous_scale="Oranges",
-                    title="커뮤니티 인증 KOL Top 15 (어워드 수 기준)",
-                    labels={"author":"작성자","총어워드":"총 어워드 수"}
+                    title="커뮤니티 인증 KOL Top 15",
                 )
                 fig_kol.update_layout(height=450, yaxis={"categoryorder":"total ascending"})
                 st.plotly_chart(fig_kol, use_container_width=True)
-
             with col_k2:
-                st.markdown(f"**🎯 KOL 후보 {len(kol_df)}명 발굴**")
                 st.dataframe(
                     kol_df.head(10)[["author","어워드게시글수","총어워드","평균Score","주요서브레딧"]],
                     use_container_width=True, hide_index=True, height=380
                 )
 
-            # 어워드 분포 요약
-            c1k, c2k, c3k = st.columns(3)
-            with c1k:
-                st.metric("어워드 게시글 수", f"{len(award_df)}건")
-            with c2k:
-                st.metric("KOL 후보 수", f"{len(kol_df)}명")
-            with c3k:
-                st.metric("KOL 평균 Score", f"{kol_df['평균Score'].mean():.0f}")
-
-    # ── 기법 8 : 3축 타깃 광고
     with st.expander("🎯 기법 8 — 3축 타깃 광고 (피부타입 × 지역 × 계절) | ROAS +25~50%", expanded=False):
-        st.markdown("""
-        > **개념:** author_flair_text(피부타입·지역) + 계절 정보를 결합한
-        > 3축 정밀 세그먼트로 광고 ROAS를 25~50% 향상시킵니다.
-        """)
-
         flair_df = filtered[filtered["author_flair_text"].notna() & (filtered["author_flair_text"] != "")].copy()
-
         st.markdown(f"**author_flair 보유 게시글:** {len(flair_df)}건 / 전체 {len(filtered)}건")
 
-        if not flair_df.empty:
-            # 계절 분류
-            flair_df["month"] = flair_df["created_dt"].dt.month
-            def season(m):
-                if m in [12,1,2]: return "겨울"
-                elif m in [3,4,5]: return "봄"
-                elif m in [6,7,8]: return "여름"
-                else: return "가을"
-            flair_df["계절"] = flair_df["month"].apply(season)
-
-            season_region = flair_df.groupby(["region","계절"]).agg(
-                게시글수=("id","count"),
-                평균Score=("score","mean"),
-            ).reset_index()
-
-            fig_tri = px.bar(
-                season_region, x="region", y="게시글수",
-                color="계절", barmode="group",
-                color_discrete_map={"봄":"#86efac","여름":"#fbbf24","가을":"#fb923c","겨울":"#93c5fd"},
-                title="지역 × 계절 게시글 분포 (3축 타깃 세그먼트 기반)",
-                labels={"region":"지역","게시글수":"게시글 수"}
-            )
-            fig_tri.update_layout(height=350)
-            st.plotly_chart(fig_tri, use_container_width=True)
-        else:
-            st.info("author_flair_text 데이터가 충분하지 않습니다. JSON API 수집 시 해당 필드가 수집됩니다.")
-
-        # 타깃 세그먼트 매트릭스 (설명용 정적 테이블)
-        st.markdown("**📋 타깃 세그먼트 광고 매트릭스 (전략 가이드)**")
         matrix_data = {
             "세그먼트": ["건성 + 한국 + 겨울","지성 + 동남아 + 연중","민감성 + 전지역 + 연중","복합성 + 북미 + 봄"],
             "타깃 메시지": [
@@ -1034,61 +1167,24 @@ with tab5:
         }
         st.dataframe(pd.DataFrame(matrix_data), use_container_width=True, hide_index=True)
 
-    # ── 기법 9 : 갤러리 비포앤애프터
     with st.expander("📸 기법 9 — 갤러리 비포앤애프터 소셜 프루프 | 상세페이지 전환율 +15~35%", expanded=False):
-        st.markdown("""
-        > **개념:** is_gallery=True 게시글에는 소비자 무보정 비포앤애프터 사진이 집중.
-        > 브랜드 사진보다 신뢰도 9.8배(Nielsen 기준)로, 제품 상세페이지 전환율을 높입니다.
-        """)
-
-        gallery_df = filtered[filtered["is_gallery"] == 1].copy()
+        gallery_df  = filtered[filtered["is_gallery"] == 1].copy()
         non_gallery = filtered[filtered["is_gallery"] != 1].copy()
 
         col_g1, col_g2, col_g3 = st.columns(3)
         with col_g1:
             st.metric("갤러리 게시글 수", f"{len(gallery_df)}건")
         with col_g2:
-            avg_g = gallery_df["score"].mean() if len(gallery_df) > 0 else 0
+            avg_g  = gallery_df["score"].mean() if len(gallery_df) > 0 else 0
             avg_ng = non_gallery["score"].mean() if len(non_gallery) > 0 else 0
             st.metric("갤러리 평균 Score", f"{avg_g:.0f}", delta=f"{avg_g-avg_ng:+.0f} vs 일반")
         with col_g3:
-            high_gallery = len(gallery_df[gallery_df["score"] >= 200])
-            st.metric("Score≥200 갤러리", f"{high_gallery}건")
+            st.metric("Score≥200 갤러리", f"{len(gallery_df[gallery_df['score'] >= 200])}건")
 
-        if not gallery_df.empty:
-            col_ga, col_gb = st.columns(2)
-            with col_ga:
-                fig_gal = px.bar(
-                    gallery_df.groupby("subreddit")["score"].agg(["count","mean"]).reset_index()
-                    .rename(columns={"count":"갤러리수","mean":"평균Score"}).sort_values("갤러리수", ascending=False).head(15),
-                    x="갤러리수", y="subreddit", orientation="h",
-                    color="평균Score", color_continuous_scale="Purples",
-                    title="서브레딧별 갤러리 게시글 분포",
-                    labels={"subreddit":"서브레딧","갤러리수":"갤러리 수"}
-                )
-                fig_gal.update_layout(height=400, yaxis={"categoryorder":"total ascending"})
-                st.plotly_chart(fig_gal, use_container_width=True)
-
-            with col_gb:
-                high_score_gallery = gallery_df[gallery_df["score"] >= 200].nlargest(8, "score")[
-                    ["subreddit","title","score","num_comments","region"]
-                ]
-                st.markdown("**⭐ 고점 갤러리 게시글 (DM 협업 우선 대상)**")
-                st.dataframe(high_score_gallery, use_container_width=True, hide_index=True, height=350)
-
-    # ════════════════════════════════════════
-    # 영역 D : 리스크 마케팅
-    # ════════════════════════════════════════
     st.markdown("<div class='section-header'>🅓 영역 D. 리스크 마케팅 — \"위기를 기회로 전환\"</div>",
                 unsafe_allow_html=True)
 
-    # ── 기법 10 : 위기 조기 대응
     with st.expander("🚨 기법 10 — 실시간 성분 위기 조기 대응 | 위기 대응 시간 24~48시간 단축", expanded=True):
-        st.markdown("""
-        > **개념:** upvote_ratio < 0.6 게시글 자동 감지로 성분 부작용 VOC가
-        > 커뮤니티에서 폭발하기 **24~48시간 전에** 포착하고 선제 대응합니다.
-        """)
-
         risk_threshold = st.slider("위기 감지 업보트 비율 기준", 0.40, 0.70, 0.60, 0.01, key="risk_ratio")
         risk_min_score = st.slider("최소 Score (노이즈 제거)", 10, 200, 30, 10, key="risk_score")
 
@@ -1104,8 +1200,7 @@ with tab5:
         with col_r2:
             st.metric("평균 Score", f"{risk_posts['score'].mean():.0f}" if len(risk_posts) > 0 else "0")
         with col_r3:
-            max_comments_risk = int(risk_posts["num_comments"].max()) if len(risk_posts) > 0 else 0
-            st.metric("최대 댓글 수", f"{max_comments_risk:,}")
+            st.metric("최대 댓글 수", f"{int(risk_posts['num_comments'].max()):,}" if len(risk_posts) > 0 else "0")
 
         if not risk_posts.empty:
             col_ra, col_rb = st.columns(2)
@@ -1115,82 +1210,29 @@ with tab5:
                     size="num_comments", color="subreddit",
                     hover_data=["title"],
                     title=f"⚠️ 위기 게시글 분포 (업보트비율 < {risk_threshold:.0%})",
-                    labels={"upvote_ratio":"업보트 비율","score":"Score"}
                 )
-                fig_risk.add_vline(x=risk_threshold, line_dash="dash", line_color="red",
-                                   annotation_text="위기 기준선")
+                fig_risk.add_vline(x=risk_threshold, line_dash="dash", line_color="red")
                 fig_risk.update_layout(height=400)
                 st.plotly_chart(fig_risk, use_container_width=True)
-
             with col_rb:
                 st.markdown("**🚨 즉시 대응 필요 게시글 (Score 높은 순)**")
                 for _, row in risk_posts.head(7).iterrows():
                     ratio_pct = f"{row['upvote_ratio']*100:.0f}%"
                     st.markdown(f"""
                     <div class='post-card' style='border-left-color:#ef4444'>
-                        <div class='ptitle'>⚠️ {str(row['title'])[:90]}{'...' if len(str(row['title'])) > 90 else ''}</div>
+                        <div class='ptitle'>⚠️ {str(row['title'])[:90]}</div>
                         <div class='pmeta'>r/{row['subreddit']} &nbsp;|&nbsp;
                             <span style='color:#ef4444;font-weight:700'>⭐ {int(row['score']):,} | 👍 {ratio_pct}</span>
-                            &nbsp;|&nbsp; 💬 {int(row['num_comments']):,}</div>
+                        </div>
                     </div>
                     """, unsafe_allow_html=True)
 
-        # 대응 타임라인 가이드
-        st.markdown("""
-        **⏱️ 대응 속도별 브랜드 리스크 차이**
-
-        | 대응 시점 | 결과 |
-        |-----------|------|
-        | 6시간 이내 | ✅ "우리가 먼저 알았다" → 투명 브랜드 이미지 |
-        | 24시간 이내 | ✅ 커뮤니티 내 해소 → 브랜드 신뢰 상승 |
-        | 48시간 초과 | ❌ SNS 확산 → 언론 보도 → 매출 타격 |
-        """)
-
-    # ── 기법 11 : 논쟁 교육 마케팅
     with st.expander("📚 기법 11 — 논쟁 교육 마케팅 | SEO 에버그린 트래픽 확보", expanded=False):
-        st.markdown("""
-        > **개념:** upvote_ratio 0.5~0.7 구간의 '논쟁 중인 성분'은 위험이 아닌 마케팅 기회.
-        > 혼란스러운 소비자에게 정확한 정보를 제공하면 카테고리 권위자가 됩니다.
-        """)
-
         edu_posts = filtered[
             (filtered["upvote_ratio"] >= 0.50) &
             (filtered["upvote_ratio"] < 0.70) &
             (filtered["score"] >= 30)
         ].copy()
-
-        if keywords_df.empty:
-            st.info("keyword_hits 데이터가 있으면 성분별 논쟁 분석이 가능합니다.")
-        else:
-            edu_kw = keywords_df[
-                (keywords_df["upvote_ratio"] >= 0.50) &
-                (keywords_df["upvote_ratio"] < 0.70)
-            ].groupby(["keyword","keyword_category"]).agg(
-                논쟁게시글수=("post_id","nunique"),
-                평균업보트비율=("upvote_ratio","mean"),
-                총Score=("score","sum"),
-            ).reset_index().sort_values("논쟁게시글수", ascending=False)
-
-            col_e1, col_e2 = st.columns(2)
-            with col_e1:
-                fig_edu = px.bar(
-                    edu_kw.head(15), x="논쟁게시글수", y="keyword",
-                    orientation="h", color="평균업보트비율",
-                    color_continuous_scale="RdYlBu",
-                    title="논쟁 중인 성분 Top 15 (교육 콘텐츠 기회)",
-                    labels={"keyword":"성분","논쟁게시글수":"논쟁 게시글 수"}
-                )
-                fig_edu.update_layout(height=450, yaxis={"categoryorder":"total ascending"})
-                st.plotly_chart(fig_edu, use_container_width=True)
-
-            with col_e2:
-                st.markdown("**💡 에버그린 교육 콘텐츠 아이디어**")
-                for _, row in edu_kw.head(5).iterrows():
-                    st.markdown(f"""
-                    **`{row['keyword']}`** — {row['논쟁게시글수']}건 논쟁
-                    → 📝 *\"{row['keyword']} 성분, 써야 할까요? 데이터로만 판단합니다\"*
-                    """)
-                    st.markdown("---")
 
         col_e3, col_e4 = st.columns(2)
         with col_e3:
@@ -1198,81 +1240,177 @@ with tab5:
         with col_e4:
             st.metric("논쟁 게시글 평균 Score", f"{edu_posts['score'].mean():.0f}" if len(edu_posts) > 0 else "0")
 
-    # ── 기법 12 : 크로스포스트 바이럴 증폭
     with st.expander("🔥 기법 12 — 크로스포스트 바이럴 증폭 | 트렌드 타이밍 선점", expanded=True):
-        st.markdown("""
-        > **개념:** num_crossposts ≥ 3인 게시글 = 이미 복수 커뮤니티에서 화제.
-        > 이 신호를 가장 먼저 포착해 자사 SNS에서 트렌드에 편승하면 검색량 피크와 타이밍을 맞출 수 있습니다.
-        """)
-
         cp_threshold = st.slider("크로스포스트 최소 기준", 1, 10, 2, 1, key="cp_threshold")
-        viral_posts = filtered[filtered["num_crossposts"] >= cp_threshold].copy()
+        viral_posts  = filtered[filtered["num_crossposts"] >= cp_threshold].copy()
 
         col_v1, col_v2, col_v3 = st.columns(3)
         with col_v1:
             st.metric("🔥 바이럴 게시글", f"{len(viral_posts)}건")
         with col_v2:
-            avg_cp = viral_posts["num_crossposts"].mean() if len(viral_posts) > 0 else 0
-            st.metric("평균 크로스포스트 수", f"{avg_cp:.1f}회")
+            st.metric("평균 크로스포스트 수", f"{viral_posts['num_crossposts'].mean():.1f}회" if len(viral_posts) > 0 else "0")
         with col_v3:
-            max_cp = int(viral_posts["num_crossposts"].max()) if len(viral_posts) > 0 else 0
-            st.metric("최대 크로스포스트", f"{max_cp}회")
+            st.metric("최대 크로스포스트", f"{int(viral_posts['num_crossposts'].max())}회" if len(viral_posts) > 0 else "0")
 
         if not viral_posts.empty:
-            col_va, col_vb = st.columns(2)
-            with col_va:
-                fig_viral = px.scatter(
-                    viral_posts, x="num_crossposts", y="score",
-                    size="num_comments", color="subreddit",
-                    hover_data=["title"],
-                    title=f"🔥 바이럴 게시글 (크로스포스트 ≥ {cp_threshold})",
-                    labels={"num_crossposts":"크로스포스트 수","score":"Score"}
-                )
-                fig_viral.update_layout(height=400)
-                st.plotly_chart(fig_viral, use_container_width=True)
-
-            with col_vb:
-                st.markdown("**⚡ 즉시 콘텐츠 대응 필요 게시글 (크로스포스트 높은 순)**")
-                top_viral = viral_posts.nlargest(7, "num_crossposts")
-                for _, row in top_viral.iterrows():
-                    st.markdown(f"""
-                    <div class='post-card' style='border-left-color:#f59e0b'>
-                        <div class='ptitle'>🔥 {str(row['title'])[:85]}{'...' if len(str(row['title'])) > 85 else ''}</div>
-                        <div class='pmeta'>r/{row['subreddit']} &nbsp;|&nbsp;
-                            <span style='color:#f59e0b;font-weight:700'>🔁 {int(row['num_crossposts'])}회 크로스포스트</span>
-                            &nbsp;|&nbsp; ⭐ {int(row['score']):,} &nbsp;|&nbsp; 💬 {int(row['num_comments']):,}</div>
+            st.markdown("**⚡ 즉시 콘텐츠 대응 필요 게시글 (크로스포스트 높은 순)**")
+            for _, row in viral_posts.nlargest(7, "num_crossposts").iterrows():
+                st.markdown(f"""
+                <div class='post-card' style='border-left-color:#f59e0b'>
+                    <div class='ptitle'>🔥 {str(row['title'])[:85]}</div>
+                    <div class='pmeta'>r/{row['subreddit']} &nbsp;|&nbsp;
+                        <span style='color:#f59e0b;font-weight:700'>🔁 {int(row['num_crossposts'])}회 크로스포스트</span>
+                        &nbsp;|&nbsp; ⭐ {int(row['score']):,}
                     </div>
-                    """, unsafe_allow_html=True)
+                </div>
+                """, unsafe_allow_html=True)
 
-            # 서브레딧별 바이럴 분포
-            cp_sub = viral_posts.groupby("subreddit")["num_crossposts"].sum().reset_index()
-            cp_sub.columns = ["subreddit","총크로스포스트수"]
-            cp_sub = cp_sub.sort_values("총크로스포스트수", ascending=False).head(12)
-            fig_cpsub = px.bar(
-                cp_sub, x="총크로스포스트수", y="subreddit",
-                orientation="h", color="총크로스포스트수",
-                color_continuous_scale="Oranges",
-                title="서브레딧별 총 크로스포스트 수",
-                labels={"subreddit":"서브레딧","총크로스포스트수":"총 크로스포스트 수"}
+# ═══════════════════════════════════════════
+# TAB 4 : 원본 데이터
+# ═══════════════════════════════════════════
+with tab4:
+    st.markdown("<div class='section-header'>📋 수집 데이터 테이블</div>", unsafe_allow_html=True)
+
+    cols_show = [c for c in [
+        "subreddit", "title", "score", "num_comments",
+        "upvote_ratio", "region", "region_group", "fetch_type", "fetch_date",
+        "link_flair_text", "author", "reddit_url"
+    ] if c in filtered.columns]
+
+    # 제목에 링크 포함한 표시용 컬럼 추가
+    df_show = filtered[cols_show].sort_values("score", ascending=False).copy()
+    if "reddit_url" in df_show.columns:
+        df_show["원문 링크"] = df_show["reddit_url"].apply(
+            lambda u: f"[↗ 원문]({u})" if u else ""
+        )
+        df_show = df_show.drop(columns=["reddit_url"])
+
+    st.dataframe(df_show, use_container_width=True, height=500)
+
+    csv_cols = [c for c in cols_show if c != "reddit_url"]
+    csv = filtered[csv_cols].to_csv(index=False, encoding="utf-8-sig")
+    st.download_button(
+        "⬇️ CSV 다운로드",
+        data=csv,
+        file_name=f"reddit_cosmetics_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+        mime="text/csv"
+    )
+
+    if not meta_df.empty:
+        st.markdown("<div class='section-header'>📌 서브레딧 메타 정보</div>", unsafe_allow_html=True)
+        st.dataframe(meta_df, use_container_width=True, height=300)
+
+# ═══════════════════════════════════════════
+# TAB 6 : 기본정보
+# ═══════════════════════════════════════════
+with tab6:
+
+    # ── KPI 요약 ────────────────────────────────────────
+    st.markdown("<div class='section-header'>🗄️ DB 기본 정보</div>", unsafe_allow_html=True)
+
+    db_size_str = "-"
+    if os.path.exists(DB_PATH):
+        db_bytes = os.path.getsize(DB_PATH)
+        db_size_str = f"{db_bytes / 1024:.1f} KB" if db_bytes < 1024*1024 else f"{db_bytes / 1024 / 1024:.2f} MB"
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    with m1:
+        st.metric("총 수집 건수",    f"{len(posts_df):,}건")
+    with m2:
+        st.metric("서브레딧 수",     f"{posts_df['subreddit'].nunique()}개")
+    with m3:
+        first_dt = posts_df["fetch_date"].min()
+        st.metric("최초 수집일", first_dt.strftime("%Y-%m-%d") if pd.notna(first_dt) else "-")
+    with m4:
+        last_dt = posts_df["fetch_date"].max()
+        st.metric("최근 수집일", last_dt.strftime("%Y-%m-%d") if pd.notna(last_dt) else "-")
+    with m5:
+        st.metric("DB 파일 크기", db_size_str)
+
+    fetch_type_counts = posts_df["fetch_type"].value_counts()
+    mc1, mc2, mc3 = st.columns(3)
+    with mc1:
+        st.metric("주간 수집",  f"{fetch_type_counts.get('weekly', 0):,}건")
+    with mc2:
+        st.metric("월간 수집",  f"{fetch_type_counts.get('monthly', 0):,}건")
+    with mc3:
+        st.metric("미분류 지역", f"{(posts_df['region_group'] == '미분류').sum():,}건")
+
+    # ── 서브레딧별 수집 현황 ─────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<div class='section-header'>📋 서브레딧별 수집 현황</div>", unsafe_allow_html=True)
+
+    sub_status = (
+        posts_df.groupby("subreddit")
+        .agg(
+            수집건수=("id", "count"),
+            최근수집일=("fetch_date", "max"),
+            평균Score=("score", "mean"),
+            지역그룹=("region_group", lambda x: x.value_counts().index[0] if len(x) > 0 else "-"),
+        )
+        .reset_index()
+        .sort_values("수집건수", ascending=False)
+    )
+    sub_status["최근수집일"] = sub_status["최근수집일"].dt.strftime("%Y-%m-%d")
+    sub_status["평균Score"]  = sub_status["평균Score"].round(1)
+
+    st.dataframe(sub_status, use_container_width=True, hide_index=True, height=400)
+
+    # ── 수집 트렌드 (월별) ───────────────────────────────
+    st.markdown("<div class='section-header'>📈 수집 트렌드 (월별)</div>", unsafe_allow_html=True)
+
+    posts_df["ym"] = posts_df["fetch_date"].dt.to_period("M").astype(str)
+    monthly = (
+        posts_df.groupby(["ym", "fetch_type"])
+        .size()
+        .reset_index(name="건수")
+        .sort_values("ym")
+    )
+
+    if not monthly.empty:
+        fig_trend = px.bar(
+            monthly, x="ym", y="건수", color="fetch_type",
+            barmode="stack",
+            color_discrete_map={"weekly": "#185FA5", "monthly": "#1D9E75"},
+            title="월별 수집 건수 (수집 유형별 누적)",
+            labels={"ym": "연월", "건수": "수집 건수", "fetch_type": "수집 유형"}
+        )
+        fig_trend.update_layout(height=320, xaxis_tickangle=-30)
+        st.plotly_chart(fig_trend, use_container_width=True)
+    else:
+        st.info("수집 날짜 데이터가 없습니다.")
+
+    # ── 지역 그룹 분포 ───────────────────────────────────
+    col_rg1, col_rg2 = st.columns(2)
+
+    with col_rg1:
+        st.markdown("<div class='section-header'>🌏 지역 그룹 분포</div>", unsafe_allow_html=True)
+        rg_cnt = posts_df["region_group"].value_counts().reset_index()
+        rg_cnt.columns = ["지역 그룹", "게시글 수"]
+        fig_rg = px.pie(
+            rg_cnt, values="게시글 수", names="지역 그룹",
+            title="지역 그룹별 게시글 비중",
+            hole=0.4,
+            color_discrete_sequence=px.colors.qualitative.Set2
+        )
+        fig_rg.update_layout(height=350)
+        st.plotly_chart(fig_rg, use_container_width=True)
+
+    with col_rg2:
+        st.markdown("<div class='section-header'>📊 지역 그룹 상세</div>", unsafe_allow_html=True)
+        rg_detail = (
+            posts_df.groupby("region_group")
+            .agg(
+                게시글수=("id", "count"),
+                서브레딧수=("subreddit", "nunique"),
+                평균Score=("score", "mean"),
             )
-            fig_cpsub.update_layout(height=350, yaxis={"categoryorder":"total ascending"})
-            st.plotly_chart(fig_cpsub, use_container_width=True)
-        else:
-            st.info(f"크로스포스트 ≥ {cp_threshold}인 게시글이 없습니다. 기준값을 낮춰보세요.")
+            .reset_index()
+            .sort_values("게시글수", ascending=False)
+        )
+        rg_detail["평균Score"] = rg_detail["평균Score"].round(1)
+        st.dataframe(rg_detail, use_container_width=True, hide_index=True, height=320)
 
-        # 바이럴 타이밍 흐름 가이드
-        st.markdown("""
-        **⏱️ 바이럴 타이밍 캡처 전략**
-
-        | 시점 | 행동 |
-        |------|------|
-        | **Day 0** | Reddit 크로스포스트 급증 포착 (자동 알림) |
-        | **Day 1** | 자사 SNS "이 성분 알고 계셨나요?" 콘텐츠 발행 |
-        | **Day 3** | 구글 트렌드 해당 키워드 검색량 급등 시작 |
-        | **Day 5** | 뷰티 유튜버들 해당 성분 영상 발행 (경쟁사 인지) |
-        | **Day 7** | 언론 보도 → **우리는 이미 Day 1부터 상위 노출** |
-        """)
-
-
+# ─────────────────────────────────────────
 st.markdown("---")
-st.caption(f"🌿 Reddit 화장품 시장조사 대시보드 v1.0 | DB: {DB_PATH} | 생성: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+st.caption(f"🌿 Reddit 화장품 시장조사 대시보드 v4.0 | DB: {DB_PATH} | 생성: {datetime.now().strftime('%Y-%m-%d %H:%M')}")

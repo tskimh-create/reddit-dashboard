@@ -13,13 +13,22 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 from datetime import datetime, timedelta
-
-# ─────────────────────────────────────────
-# ★ Google Drive에서 DB 자동 다운로드 (안정화 버전)
-# ─────────────────────────────────────────
 import os
 import gdown
 
+# ─────────────────────────────────────────
+# 0. 페이지 기본 설정 ★ 반드시 첫 번째 Streamlit 명령 ★
+# ─────────────────────────────────────────
+st.set_page_config(
+    page_title="Reddit 화장품 인사이트",
+    page_icon="🌿",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ─────────────────────────────────────────
+# ★ Google Drive에서 DB 자동 다운로드
+# ─────────────────────────────────────────
 DB_PATH        = "reddit_data.db"
 GDRIVE_FILE_ID = "1-nuBg81wfomyeCoqvF6JMURzSCBWM9Fz"   # ← 본인 파일 ID로 교체!
 
@@ -46,16 +55,6 @@ def ensure_db():
     return DB_PATH
 
 ensure_db()
-
-# ─────────────────────────────────────────
-# 0. 페이지 기본 설정
-# ─────────────────────────────────────────
-st.set_page_config(
-    page_title="Reddit 화장품 인사이트",
-    page_icon="🌿",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
 
 # ─────────────────────────────────────────
 # 공통 CSS
@@ -136,24 +135,33 @@ h1, h2, h3 { font-family: 'DM Serif Display', serif; }
 # ─────────────────────────────────────────
 # 1. DB 연결 & 데이터 로드
 # ─────────────────────────────────────────
-DB_PATH = "reddit_data.db"
-
 @st.cache_data(ttl=300)
 def load_data():
     try:
         conn = sqlite3.connect(DB_PATH)
 
-        posts = pd.read_sql_query("""
-            SELECT id, reddit_id, subreddit, title, selftext,
+        # 실제 테이블 컬럼 목록 확인 (구버전 DB 호환)
+        cur = conn.cursor()
+        cur.execute("PRAGMA table_info(reddit_posts)")
+        existing_cols = {row[1] for row in cur.fetchall()}
+
+        base_cols = """id, reddit_id, subreddit, title, selftext,
                    score, upvote_ratio, num_comments,
                    link_flair_text, author, author_flair_text,
                    total_awards_received, num_crossposts,
                    is_gallery, is_self,
                    created_utc, fetch_date, fetch_type,
-                   region, priority_rank,
-                   permalink, url
-            FROM reddit_posts
-        """, conn)
+                   region, priority_rank"""
+
+        # permalink / url 컬럼이 없는 구버전 DB도 정상 작동
+        extra = ", ".join(
+            f"COALESCE({c}, '') as {c}"
+            for c in ["permalink", "url"]
+            if c in existing_cols
+        )
+        select_sql = f"SELECT {base_cols}{', ' + extra if extra else ''} FROM reddit_posts"
+
+        posts = pd.read_sql_query(select_sql, conn)
 
         keywords = pd.read_sql_query("""
             SELECT kh.post_id, kh.keyword, kh.keyword_category,

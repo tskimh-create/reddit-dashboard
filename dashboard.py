@@ -203,9 +203,7 @@ REGION_ING_DICT = {
     "Squalane":        ["squalane"],
 }
 
-@st.cache_data(ttl=300)
-def calc_region_ingredients(df_json):
-    df = pd.read_json(df_json)
+def calc_region_ingredients(df):
     records = []
     for ing, terms in REGION_ING_DICT.items():
         pat = "|".join(terms)
@@ -506,17 +504,23 @@ with tab_voc:
         samples   = filtered[
             filtered["title"].str.contains(pat, case=False, na=False) |
             filtered["selftext"].str.contains(pat, case=False, na=False)
-        ].nlargest(5, "score")[["subreddit","title","score","num_comments","upvote_ratio"]]
+        ].nlargest(5, "score")[["subreddit","title","score","num_comments","upvote_ratio","reddit_url"]]
         st.markdown(f"**💡 Top posts for '{top_cat}' — copywriting & product improvement source**")
         for _, row in samples.iterrows():
-            ratio_pct = f"{row['upvote_ratio']*100:.0f}%" if pd.notna(row["upvote_ratio"]) else "-"
+            ratio_pct  = f"{row['upvote_ratio']*100:.0f}%" if pd.notna(row["upvote_ratio"]) else "-"
+            url        = row.get("reddit_url", "")
+            title_str  = str(row["title"])
+            title_html = (f'<a href="{url}" target="_blank" style="color:#1a1a2e;text-decoration:none;">'
+                          f'{title_str}</a>') if url else title_str
             st.markdown(f"""
             <div class='post-card'>
-                <div class='ptitle'>📌 {row['title']}</div>
+                <div class='ptitle'>📌 {title_html}</div>
                 <div class='pmeta'>r/{row['subreddit']} &nbsp;|&nbsp;
                     <span class='pscore'>⭐ {int(row['score']):,}</span>
                     &nbsp;|&nbsp; 💬 {int(row['num_comments']):,}
-                    &nbsp;|&nbsp; 👍 {ratio_pct}</div>
+                    &nbsp;|&nbsp; 👍 {ratio_pct}
+                    {f'&nbsp;|&nbsp;<a href="{url}" target="_blank" style="font-size:.75rem;color:#718096;">source ↗</a>' if url else ''}
+                </div>
             </div>""", unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -580,6 +584,83 @@ with tab_voc:
 # TAB 3: Regional Comparison
 # ═══════════════════════════════════════════
 with tab3:
+
+    # ── Helper: simplified 4-region label ──────────────────────
+    def get_display_region(region_val):
+        if pd.isna(region_val) or str(region_val).strip() == "":
+            return "Global"
+        v = str(region_val).lower()
+        if any(k in v for k in ["korea","japan","china","asia","india","singapore","동남아","아시아","pacific"]):
+            return "Asia"
+        if any(k in v for k in ["europe","uk","germany","france","유럽","영국","네덜","스웨","이탈"]):
+            return "Europe"
+        if any(k in v for k in ["north","usa","canada","america","북미","호주","australia","newzeal","뉴질"]):
+            return "N.America"
+        return "Global"
+
+    filtered["region_display"] = filtered["region"].apply(get_display_region)
+
+    # ── 지역별 게시글 분포 ─────────────────────────────────────
+    st.markdown("<div class='section-header'>🌏 지역별 게시글 분포 (Post Distribution by Region)</div>",
+                unsafe_allow_html=True)
+
+    region4_agg = (filtered.groupby("region_display")
+                   .agg(post_count=("id","count"), avg_score=("score","mean"),
+                        total_score=("score","sum"), avg_comments=("num_comments","mean"))
+                   .reset_index())
+    region4_order = ["Global","Asia","N.America","Europe"]
+    region4_agg["region_display"] = pd.Categorical(
+        region4_agg["region_display"], categories=region4_order, ordered=True)
+    region4_agg = region4_agg.sort_values("region_display")
+
+    col_r4a, col_r4b = st.columns(2)
+    with col_r4a:
+        fig_r4bar = px.bar(region4_agg, x="region_display", y="post_count",
+                           color="avg_score", color_continuous_scale="Blues",
+                           title="지역별 게시글 수 & 평균 Score",
+                           labels={"region_display":"Region","post_count":"Post Count","avg_score":"Avg Score"},
+                           text="post_count")
+        fig_r4bar.update_traces(textposition="outside")
+        fig_r4bar.update_layout(height=350, showlegend=False)
+        st.plotly_chart(fig_r4bar, use_container_width=True)
+    with col_r4b:
+        color_map4 = {"Global":"#185FA5","Asia":"#1D9E75","N.America":"#D85A30","Europe":"#9B59B6"}
+        fig_r4bub = px.scatter(region4_agg, x="avg_score", y="avg_comments",
+                               size="total_score", color="region_display",
+                               color_discrete_map=color_map4,
+                               hover_name="region_display",
+                               title="지역별 참여도 비교 (Score vs Comments)",
+                               labels={"avg_score":"평균 Score","avg_comments":"평균 댓글",
+                                       "region_display":"Region","total_score":"Total Score"})
+        fig_r4bub.update_layout(height=350)
+        st.plotly_chart(fig_r4bub, use_container_width=True)
+
+    # ── 아시아 vs 북미 상세 비교 ───────────────────────────────
+    st.markdown("<div class='section-header'>🔍 아시아 vs 북미 상세 비교 (Top 5 Subreddits)</div>",
+                unsafe_allow_html=True)
+
+    asia4_df = filtered[filtered["region_display"] == "Asia"]
+    na4_df   = filtered[filtered["region_display"] == "N.America"]
+
+    col_r4c, col_r4d = st.columns(2)
+
+    def top5_bar(df, title, color):
+        if df.empty:
+            st.info(f"No data: {title}")
+            return
+        ts = df.groupby("subreddit")["score"].sum().nlargest(5).reset_index()
+        fig = px.bar(ts, x="score", y="subreddit", orientation="h",
+                     title=title, color_discrete_sequence=[color],
+                     labels={"score":"Total Score","subreddit":""})
+        fig.update_layout(height=280, yaxis={"categoryorder":"total ascending"}, showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+
+    with col_r4c:
+        top5_bar(asia4_df, "아시아 — 인기 서브레딧 Top 5", "#1D9E75")
+    with col_r4d:
+        top5_bar(na4_df,   "북미 — 인기 서브레딧 Top 5",   "#D85A30")
+
+    st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Monthly trend by region group ─────────────────────────
     st.markdown("<div class='section-header'>📈 Monthly Trend by Region Group</div>",
@@ -669,7 +750,7 @@ with tab3:
                 unsafe_allow_html=True)
     st.caption("Ingredients detected by scanning post titles and body text directly from collected posts.")
 
-    ing_df = calc_region_ingredients(filtered.to_json())
+    ing_df = calc_region_ingredients(filtered)
 
     if ing_df.empty:
         st.info("No ingredient data found in current filter. Try 'All' filters.")
@@ -793,19 +874,25 @@ with tab5:
         voc_ratio = st.slider("Min Upvote Ratio", 0.70, 1.00, 0.85, 0.01, key="voc_ratio")
         voc_df = filtered[
             (filtered["score"] >= voc_score) & (filtered["upvote_ratio"] >= voc_ratio)
-        ].nlargest(15, "score")[["subreddit","title","score","upvote_ratio","num_comments","region_group"]]
+        ].nlargest(15, "score")[["subreddit","title","score","upvote_ratio","num_comments","region_group","reddit_url"]]
         if voc_df.empty:
             st.info("No posts match criteria. Lower the score or ratio threshold.")
         else:
             st.markdown(f"**✅ {len(voc_df)} posts found — use these titles as copywriting source**")
             for _, row in voc_df.iterrows():
+                url        = row.get("reddit_url", "")
+                title_str  = str(row["title"])
+                title_html = (f'<a href="{url}" target="_blank" style="color:#1a1a2e;text-decoration:none;">'
+                              f'{title_str}</a>') if url else title_str
                 st.markdown(f"""
                 <div class='post-card'>
-                    <div class='ptitle'>💬 {row['title']}</div>
+                    <div class='ptitle'>💬 {title_html}</div>
                     <div class='pmeta'>r/{row['subreddit']} &nbsp;|&nbsp; {row['region_group']}
                         &nbsp;|&nbsp; <span class='pscore'>⭐ {int(row['score']):,}</span>
                         &nbsp;|&nbsp; 👍 {row['upvote_ratio']*100:.0f}%
-                        &nbsp;|&nbsp; 💬 {int(row['num_comments']):,}</div>
+                        &nbsp;|&nbsp; 💬 {int(row['num_comments']):,}
+                        {f'&nbsp;|&nbsp;<a href="{url}" target="_blank" style="font-size:.75rem;color:#718096;">source ↗</a>' if url else ''}
+                    </div>
                 </div>""", unsafe_allow_html=True)
 
     with st.expander("📅 Technique 2 — Trend Pre-emption Calendar | SEO +30%", expanded=False):
@@ -1037,13 +1124,18 @@ with tab5:
             with col_rb:
                 st.markdown("**🚨 Immediate action required (highest Score first)**")
                 for _, row in risk_posts.head(7).iterrows():
-                    ratio_pct = f"{row['upvote_ratio']*100:.0f}%"
+                    ratio_pct  = f"{row['upvote_ratio']*100:.0f}%"
+                    url        = row.get("reddit_url", "")
+                    title_str  = str(row["title"])[:90]
+                    title_html = (f'<a href="{url}" target="_blank" style="color:#1a1a2e;text-decoration:none;">'
+                                  f'{title_str}</a>') if url else title_str
                     st.markdown(f"""
                     <div class='post-card' style='border-left-color:#ef4444'>
-                        <div class='ptitle'>⚠️ {str(row['title'])[:90]}</div>
+                        <div class='ptitle'>⚠️ {title_html}</div>
                         <div class='pmeta'>r/{row['subreddit']} &nbsp;|&nbsp;
                             <span style='color:#ef4444;font-weight:700'>
                             ⭐ {int(row['score']):,} | 👍 {ratio_pct}</span>
+                            {f'&nbsp;|&nbsp;<a href="{url}" target="_blank" style="font-size:.75rem;color:#718096;">source ↗</a>' if url else ''}
                         </div>
                     </div>""", unsafe_allow_html=True)
 
@@ -1068,13 +1160,18 @@ with tab5:
         if not viral_posts.empty:
             st.markdown("**⚡ Immediate content action needed (highest crossposts first)**")
             for _, row in viral_posts.nlargest(7, "num_crossposts").iterrows():
+                url        = row.get("reddit_url", "")
+                title_str  = str(row["title"])[:85]
+                title_html = (f'<a href="{url}" target="_blank" style="color:#1a1a2e;text-decoration:none;">'
+                              f'{title_str}</a>') if url else title_str
                 st.markdown(f"""
                 <div class='post-card' style='border-left-color:#f59e0b'>
-                    <div class='ptitle'>🔥 {str(row['title'])[:85]}</div>
+                    <div class='ptitle'>🔥 {title_html}</div>
                     <div class='pmeta'>r/{row['subreddit']} &nbsp;|&nbsp;
                         <span style='color:#f59e0b;font-weight:700'>
                         🔁 {int(row['num_crossposts'])} crossposts</span>
                         &nbsp;|&nbsp; ⭐ {int(row['score']):,}
+                        {f'&nbsp;|&nbsp;<a href="{url}" target="_blank" style="font-size:.75rem;color:#718096;">source ↗</a>' if url else ''}
                     </div>
                 </div>""", unsafe_allow_html=True)
 

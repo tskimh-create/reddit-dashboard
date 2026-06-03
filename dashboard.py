@@ -1,5 +1,5 @@
 """
-Reddit Beauty Market Intelligence Dashboard v6.0
+Reddit Beauty Market Intelligence Dashboard v6.3
 Changelog:
   v2.0 - Google Drive DB auto-download
   v3.0 - Tab reorder + Consumer VOC Analysis tab
@@ -10,6 +10,7 @@ Changelog:
   v6.0 - Tab restructure: background sections → Overview / Data Source Context expander on all analysis tabs
   v6.1 - Sidebar card-style region group radio / Link bug fix (r/ prefix in fallback URL)
   v6.2 - Bug fixes: URS scatter/IndexError/r-prefix display/data mutation/LinkColumn
+  v6.3 - make_reddit_url() format branch: full URL (legacy) vs relative path (new) permalink handling
 """
 
 import sqlite3
@@ -222,12 +223,16 @@ def get_region_group(val):
 posts_df["region_group"] = posts_df["region"].apply(get_region_group)
 
 def make_reddit_url(row):
-    pl = row.get("permalink", "")
-    if pl and str(pl) not in ("", "nan", "None"):
+    pl = str(row.get("permalink", "")).strip()
+    if pl and pl not in ("", "nan", "None"):
+        # 이미 완전 URL (구버전 import — https://reddit.com/... 형식)
+        if pl.startswith("http"):
+            return pl
+        # 상대 경로 (신버전 import — /r/subreddit/comments/... 형식)
         return f"https://www.reddit.com{pl}"
+    # permalink 없을 때 fallback: reddit_id + subreddit 조합
     rid = row.get("reddit_id", "")
     sub = str(row.get("subreddit", "")).strip()
-    # subreddit 컬럼이 "r/skincare" 형식으로 저장되어 있으므로 r/ 접두사 제거
     sub_clean = sub[2:] if sub.startswith("r/") else sub
     return f"https://www.reddit.com/r/{sub_clean}/comments/{rid}/" if rid and sub_clean else ""
 

@@ -1,11 +1,13 @@
 """
-Reddit Beauty Market Intelligence Dashboard v5.0
+Reddit Beauty Market Intelligence Dashboard v6.0
 Changelog:
   v2.0 - Google Drive DB auto-download
   v3.0 - Tab reorder + Consumer VOC Analysis tab
   v4.0 - Permalink links / Region group filter / Overview tab
   v4.1 - Bugfix: set_page_config ordering / defensive SQL columns
   v5.0 - Full English UI + Regional Ingredient Comparison section
+  v5.1 - VOC/Technique post links / Regional tab new sections / LinkColumn
+  v6.0 - Tab restructure: background sections → Overview / Data Source Context expander on all analysis tabs
 """
 
 import sqlite3
@@ -272,6 +274,21 @@ if sel_sub != "All":
     filtered = filtered[filtered["subreddit"] == sel_sub]
 filtered = filtered[filtered["score"] >= min_score]
 
+# ── Helper: simplified 4-region label (global — used by Tab3 & Overview) ──
+def get_display_region(region_val):
+    if pd.isna(region_val) or str(region_val).strip() == "":
+        return "Global"
+    v = str(region_val).lower()
+    if any(k in v for k in ["korea","japan","china","asia","india","singapore","동남아","아시아","pacific"]):
+        return "Asia"
+    if any(k in v for k in ["europe","uk","germany","france","유럽","영국","네덜","스웨","이탈"]):
+        return "Europe"
+    if any(k in v for k in ["north","usa","canada","america","북미","호주","australia","newzeal","뉴질"]):
+        return "N.America"
+    return "Global"
+
+filtered["region_display"] = filtered["region"].apply(get_display_region)
+
 # ─────────────────────────────────────────
 # 3. Header
 # ─────────────────────────────────────────
@@ -321,6 +338,14 @@ tab1, tab2, tab_voc, tab3, tab5, tab4, tab6 = st.tabs([
 # TAB 1: Trend Dashboard
 # ═══════════════════════════════════════════
 with tab1:
+    with st.expander("📊 Data Source Context — Subreddit Weight (Post Count & Avg Score)", expanded=False):
+        src_ctx = (posts_df.groupby("subreddit")["score"]
+                   .agg(post_count="count", avg_score="mean")
+                   .reset_index().sort_values("post_count", ascending=False))
+        src_ctx["avg_score"] = src_ctx["avg_score"].round(1)
+        st.caption(f"Total: {len(posts_df):,} posts · {posts_df['subreddit'].nunique()} subreddits | Filtered: {len(filtered):,} posts")
+        st.dataframe(src_ctx, use_container_width=True, hide_index=True, height=250)
+
     st.markdown("<div class='section-header'>📊 Trending Posts — Top 10</div>",
                 unsafe_allow_html=True)
     top10 = filtered.nlargest(10, "score")[
@@ -344,42 +369,18 @@ with tab1:
             </div>
         </div>""", unsafe_allow_html=True)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("<div class='section-header'>📌 Subreddit Activity</div>", unsafe_allow_html=True)
-    col_a, col_b = st.columns(2)
-    with col_a:
-        sub_cnt = (filtered.groupby("subreddit")["score"]
-                   .agg(post_count="count", avg_score="mean")
-                   .reset_index().sort_values("post_count", ascending=False).head(20))
-        fig1 = px.bar(sub_cnt, x="post_count", y="subreddit", orientation="h",
-                      color="avg_score", color_continuous_scale="RdYlGn",
-                      title="Posts per Subreddit (color = Avg Score)",
-                      labels={"subreddit":"Subreddit","post_count":"Post Count","avg_score":"Avg Score"})
-        fig1.update_layout(height=500, yaxis={"categoryorder":"total ascending"})
-        st.plotly_chart(fig1, use_container_width=True)
-    with col_b:
-        sub_sc = (filtered.groupby("subreddit")["score"].sum().reset_index()
-                  .rename(columns={"score":"total_score"})
-                  .sort_values("total_score", ascending=False).head(15))
-        fig2 = px.pie(sub_sc, values="total_score", names="subreddit",
-                      title="Score Share by Subreddit (Top 15)",
-                      hole=0.4, color_discrete_sequence=px.colors.qualitative.Set3)
-        fig2.update_layout(height=500)
-        st.plotly_chart(fig2, use_container_width=True)
-
-    st.markdown("<div class='section-header'>👍 Upvote Ratio Distribution</div>", unsafe_allow_html=True)
-    if not filtered["upvote_ratio"].dropna().empty:
-        fig3 = px.histogram(filtered, x="upvote_ratio", nbins=20,
-                            color="region_group", barmode="overlay",
-                            title="Upvote Ratio Distribution (by Region Group)",
-                            labels={"upvote_ratio":"Upvote Ratio","region_group":"Region Group"})
-        fig3.update_layout(height=350)
-        st.plotly_chart(fig3, use_container_width=True)
-
 # ═══════════════════════════════════════════
 # TAB 2: Ingredient Keywords
 # ═══════════════════════════════════════════
 with tab2:
+    with st.expander("📊 Data Source Context — Subreddit Weight (Post Count & Avg Score)", expanded=False):
+        src_ctx2 = (posts_df.groupby("subreddit")["score"]
+                    .agg(post_count="count", avg_score="mean")
+                    .reset_index().sort_values("post_count", ascending=False))
+        src_ctx2["avg_score"] = src_ctx2["avg_score"].round(1)
+        st.caption(f"Total: {len(posts_df):,} posts · {posts_df['subreddit'].nunique()} subreddits | Filtered: {len(filtered):,} posts")
+        st.dataframe(src_ctx2, use_container_width=True, hide_index=True, height=250)
+
     if keywords_df.empty:
         st.warning("⚠️ No data in keyword_hits table.  Run `keyword_matcher.py` to populate it.")
         st.markdown("""
@@ -429,6 +430,14 @@ with tab2:
 # TAB VOC: Consumer VOC Analysis
 # ═══════════════════════════════════════════
 with tab_voc:
+    with st.expander("📊 Data Source Context — Subreddit Weight (Post Count & Avg Score)", expanded=False):
+        src_ctx_voc = (posts_df.groupby("subreddit")["score"]
+                       .agg(post_count="count", avg_score="mean")
+                       .reset_index().sort_values("post_count", ascending=False))
+        src_ctx_voc["avg_score"] = src_ctx_voc["avg_score"].round(1)
+        st.caption(f"Total: {len(posts_df):,} posts · {posts_df['subreddit'].nunique()} subreddits | Filtered: {len(filtered):,} posts")
+        st.dataframe(src_ctx_voc, use_container_width=True, hide_index=True, height=250)
+
     st.markdown("""
     <div class='voc-header'>
         <h3>💬 Consumer VOC Analysis — Complaints & Improvement Requests</h3>
@@ -588,83 +597,13 @@ with tab_voc:
 # TAB 3: Regional Comparison
 # ═══════════════════════════════════════════
 with tab3:
-
-    # ── Helper: simplified 4-region label ──────────────────────
-    def get_display_region(region_val):
-        if pd.isna(region_val) or str(region_val).strip() == "":
-            return "Global"
-        v = str(region_val).lower()
-        if any(k in v for k in ["korea","japan","china","asia","india","singapore","동남아","아시아","pacific"]):
-            return "Asia"
-        if any(k in v for k in ["europe","uk","germany","france","유럽","영국","네덜","스웨","이탈"]):
-            return "Europe"
-        if any(k in v for k in ["north","usa","canada","america","북미","호주","australia","newzeal","뉴질"]):
-            return "N.America"
-        return "Global"
-
-    filtered["region_display"] = filtered["region"].apply(get_display_region)
-
-    # ── Post Distribution by Region ────────────────────────────
-    st.markdown("<div class='section-header'>🌏 Post Distribution by Region</div>",
-                unsafe_allow_html=True)
-
-    region4_agg = (filtered.groupby("region_display")
-                   .agg(post_count=("id","count"), avg_score=("score","mean"),
-                        total_score=("score","sum"), avg_comments=("num_comments","mean"))
-                   .reset_index())
-    region4_order = ["Global","Asia","N.America","Europe"]
-    region4_agg["region_display"] = pd.Categorical(
-        region4_agg["region_display"], categories=region4_order, ordered=True)
-    region4_agg = region4_agg.sort_values("region_display")
-
-    col_r4a, col_r4b = st.columns(2)
-    with col_r4a:
-        fig_r4bar = px.bar(region4_agg, x="region_display", y="post_count",
-                           color="avg_score", color_continuous_scale="Blues",
-                           title="Post Count & Avg Score by Region",
-                           labels={"region_display":"Region","post_count":"Post Count","avg_score":"Avg Score"},
-                           text="post_count")
-        fig_r4bar.update_traces(textposition="outside")
-        fig_r4bar.update_layout(height=350, showlegend=False)
-        st.plotly_chart(fig_r4bar, use_container_width=True)
-    with col_r4b:
-        color_map4 = {"Global":"#185FA5","Asia":"#1D9E75","N.America":"#D85A30","Europe":"#9B59B6"}
-        fig_r4bub = px.scatter(region4_agg, x="avg_score", y="avg_comments",
-                               size="total_score", color="region_display",
-                               color_discrete_map=color_map4,
-                               hover_name="region_display",
-                               title="Engagement by Region (Score vs Comments)",
-                               labels={"avg_score":"Avg Score","avg_comments":"Avg Comments",
-                                       "region_display":"Region","total_score":"Total Score"})
-        fig_r4bub.update_layout(height=350)
-        st.plotly_chart(fig_r4bub, use_container_width=True)
-
-    # ── Asia vs N.America Detailed Comparison ─────────────────
-    st.markdown("<div class='section-header'>🔍 Asia vs N.America — Detailed Comparison (Top 5 Subreddits)</div>",
-                unsafe_allow_html=True)
-
-    asia4_df = filtered[filtered["region_display"] == "Asia"]
-    na4_df   = filtered[filtered["region_display"] == "N.America"]
-
-    col_r4c, col_r4d = st.columns(2)
-
-    def top5_bar(df, title, color):
-        if df.empty:
-            st.info(f"No data: {title}")
-            return
-        ts = df.groupby("subreddit")["score"].sum().nlargest(5).reset_index()
-        fig = px.bar(ts, x="score", y="subreddit", orientation="h",
-                     title=title, color_discrete_sequence=[color],
-                     labels={"score":"Total Score","subreddit":""})
-        fig.update_layout(height=280, yaxis={"categoryorder":"total ascending"}, showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
-
-    with col_r4c:
-        top5_bar(asia4_df, "Asia — Top 5 Subreddits",      "#1D9E75")
-    with col_r4d:
-        top5_bar(na4_df,   "N.America — Top 5 Subreddits", "#D85A30")
-
-    st.markdown("<br>", unsafe_allow_html=True)
+    with st.expander("📊 Data Source Context — Subreddit Weight (Post Count & Avg Score)", expanded=False):
+        src_ctx3 = (posts_df.groupby("subreddit")["score"]
+                    .agg(post_count="count", avg_score="mean")
+                    .reset_index().sort_values("post_count", ascending=False))
+        src_ctx3["avg_score"] = src_ctx3["avg_score"].round(1)
+        st.caption(f"Total: {len(posts_df):,} posts · {posts_df['subreddit'].nunique()} subreddits | Filtered: {len(filtered):,} posts")
+        st.dataframe(src_ctx3, use_container_width=True, hide_index=True, height=250)
 
     # ── Monthly trend by region group ─────────────────────────
     st.markdown("<div class='section-header'>📈 Monthly Trend by Region Group</div>",
@@ -681,71 +620,6 @@ with tab3:
                          labels={"ym":"Month","posts":"Post Count","region_group":"Region Group"})
         fig_mt.update_layout(height=320, xaxis_tickangle=-20)
         st.plotly_chart(fig_mt, use_container_width=True)
-
-    # ── Region group bar + bubble ──────────────────────────────
-    st.markdown("<div class='section-header'>🌏 Region Group Post Volume & Engagement</div>",
-                unsafe_allow_html=True)
-
-    region_agg = (filtered.groupby("region_group")
-                  .agg(post_count=("id","count"), avg_score=("score","mean"),
-                       total_score=("score","sum"), avg_comments=("num_comments","mean"))
-                  .reset_index())
-
-    col_a, col_b = st.columns(2)
-    with col_a:
-        fig_r1 = px.bar(region_agg.sort_values("post_count", ascending=False),
-                        x="region_group", y="post_count",
-                        color="avg_score", color_continuous_scale="Viridis",
-                        title="Post Count & Avg Score by Region Group",
-                        labels={"region_group":"Region Group","post_count":"Post Count","avg_score":"Avg Score"})
-        fig_r1.update_layout(height=350, xaxis_tickangle=-15)
-        st.plotly_chart(fig_r1, use_container_width=True)
-    with col_b:
-        fig_r2 = px.scatter(region_agg, x="avg_score", y="avg_comments",
-                            size="total_score", color="region_group",
-                            hover_name="region_group",
-                            title="Engagement by Region Group (Score vs Comments)",
-                            labels={"avg_score":"Avg Score","avg_comments":"Avg Comments",
-                                    "region_group":"Region Group"})
-        fig_r2.update_layout(height=350)
-        st.plotly_chart(fig_r2, use_container_width=True)
-
-    # ── Asia vs North America detail ───────────────────────────
-    st.markdown("<div class='section-header'>🔍 Asia vs North America — Detailed Comparison</div>",
-                unsafe_allow_html=True)
-    asia_df = filtered[filtered["region_group"] == "Asia-Pacific"]
-    na_df   = filtered[filtered["region_group"] == "Western Markets (NA/EU)"]
-    col_c, col_d = st.columns(2)
-
-    def top_subs_chart(df, title):
-        if df.empty:
-            st.info(f"No data for this region group: {title}")
-            return
-        ts = df.groupby("subreddit")["score"].sum().nlargest(10).reset_index()
-        fig = px.bar(ts, x="score", y="subreddit", orientation="h",
-                     title=title, color="score", color_continuous_scale="Reds",
-                     labels={"score":"Total Score","subreddit":"Subreddit"})
-        fig.update_layout(height=350, yaxis={"categoryorder":"total ascending"})
-        st.plotly_chart(fig, use_container_width=True)
-
-    with col_c: top_subs_chart(asia_df, "🌏 Asia-Pacific — Top 10 Subreddits")
-    with col_d: top_subs_chart(na_df,   "🇺🇸 Western Markets — Top 10 Subreddits")
-
-    # ── Region × Subreddit heatmap ─────────────────────────────
-    st.markdown("<div class='section-header'>🗺️ Region × Subreddit Activity Heatmap</div>",
-                unsafe_allow_html=True)
-    try:
-        pivot = filtered.pivot_table(index="region_group", columns="subreddit",
-                                     values="score", aggfunc="sum", fill_value=0)
-        top_cols = pivot.sum().nlargest(20).index
-        pivot    = pivot[top_cols]
-        fig_heat = px.imshow(pivot, color_continuous_scale="YlOrRd",
-                             title="Region × Subreddit Score Heatmap (Top 20 subreddits)",
-                             labels={"color":"Total Score"}, aspect="auto")
-        fig_heat.update_layout(height=400)
-        st.plotly_chart(fig_heat, use_container_width=True)
-    except Exception as e:
-        st.warning(f"Heatmap error: {e}")
 
     # ════════════════════════════════════════
     # Regional Ingredient Comparison
@@ -1277,9 +1151,163 @@ with tab6:
         rg_det["avg_score"] = rg_det["avg_score"].round(1)
         st.dataframe(rg_det, use_container_width=True, hide_index=True, height=320)
 
+    # ── Subreddit Activity (from Tab1) ─────────────────────────
+    st.markdown("<div class='section-header'>📌 Subreddit Activity</div>", unsafe_allow_html=True)
+    ov_col_a, ov_col_b = st.columns(2)
+    with ov_col_a:
+        ov_sub_cnt = (filtered.groupby("subreddit")["score"]
+                     .agg(post_count="count", avg_score="mean")
+                     .reset_index().sort_values("post_count", ascending=False).head(20))
+        fig_ov1 = px.bar(ov_sub_cnt, x="post_count", y="subreddit", orientation="h",
+                         color="avg_score", color_continuous_scale="RdYlGn",
+                         title="Posts per Subreddit (color = Avg Score)",
+                         labels={"subreddit":"Subreddit","post_count":"Post Count","avg_score":"Avg Score"})
+        fig_ov1.update_layout(height=500, yaxis={"categoryorder":"total ascending"})
+        st.plotly_chart(fig_ov1, use_container_width=True)
+    with ov_col_b:
+        ov_sub_sc = (filtered.groupby("subreddit")["score"].sum().reset_index()
+                     .rename(columns={"score":"total_score"})
+                     .sort_values("total_score", ascending=False).head(15))
+        fig_ov2 = px.pie(ov_sub_sc, values="total_score", names="subreddit",
+                         title="Score Share by Subreddit (Top 15)",
+                         hole=0.4, color_discrete_sequence=px.colors.qualitative.Set3)
+        fig_ov2.update_layout(height=500)
+        st.plotly_chart(fig_ov2, use_container_width=True)
+
+    # ── Upvote Ratio Distribution (from Tab1) ──────────────────
+    st.markdown("<div class='section-header'>👍 Upvote Ratio Distribution</div>", unsafe_allow_html=True)
+    if not filtered["upvote_ratio"].dropna().empty:
+        fig_ov3 = px.histogram(filtered, x="upvote_ratio", nbins=20,
+                               color="region_group", barmode="overlay",
+                               title="Upvote Ratio Distribution (by Region Group)",
+                               labels={"upvote_ratio":"Upvote Ratio","region_group":"Region Group"})
+        fig_ov3.update_layout(height=350)
+        st.plotly_chart(fig_ov3, use_container_width=True)
+
+    # ── Post Distribution by Region (from Tab3) ────────────────
+    st.markdown("<div class='section-header'>🌏 Post Distribution by Region</div>",
+                unsafe_allow_html=True)
+    ov_region4_agg = (filtered.groupby("region_display")
+                      .agg(post_count=("id","count"), avg_score=("score","mean"),
+                           total_score=("score","sum"), avg_comments=("num_comments","mean"))
+                      .reset_index())
+    region4_order = ["Global","Asia","N.America","Europe"]
+    ov_region4_agg = ov_region4_agg.copy()
+    ov_region4_agg["region_display"] = pd.Categorical(
+        ov_region4_agg["region_display"], categories=region4_order, ordered=True)
+    ov_region4_agg = ov_region4_agg.sort_values("region_display")
+
+    ov_col_r4a, ov_col_r4b = st.columns(2)
+    with ov_col_r4a:
+        fig_ov_r4bar = px.bar(ov_region4_agg, x="region_display", y="post_count",
+                              color="avg_score", color_continuous_scale="Blues",
+                              title="Post Count & Avg Score by Region",
+                              labels={"region_display":"Region","post_count":"Post Count","avg_score":"Avg Score"},
+                              text="post_count")
+        fig_ov_r4bar.update_traces(textposition="outside")
+        fig_ov_r4bar.update_layout(height=350, showlegend=False)
+        st.plotly_chart(fig_ov_r4bar, use_container_width=True)
+    with ov_col_r4b:
+        ov_color_map4 = {"Global":"#185FA5","Asia":"#1D9E75","N.America":"#D85A30","Europe":"#9B59B6"}
+        fig_ov_r4bub = px.scatter(ov_region4_agg, x="avg_score", y="avg_comments",
+                                  size="total_score", color="region_display",
+                                  color_discrete_map=ov_color_map4,
+                                  hover_name="region_display",
+                                  title="Engagement by Region (Score vs Comments)",
+                                  labels={"avg_score":"Avg Score","avg_comments":"Avg Comments",
+                                          "region_display":"Region","total_score":"Total Score"})
+        fig_ov_r4bub.update_layout(height=350)
+        st.plotly_chart(fig_ov_r4bub, use_container_width=True)
+
+    # ── Asia vs N.America Top 5 (from Tab3) ────────────────────
+    st.markdown("<div class='section-header'>🔍 Asia vs N.America — Detailed Comparison (Top 5 Subreddits)</div>",
+                unsafe_allow_html=True)
+    ov_asia4_df = filtered[filtered["region_display"] == "Asia"]
+    ov_na4_df   = filtered[filtered["region_display"] == "N.America"]
+    ov_col_r4c, ov_col_r4d = st.columns(2)
+
+    def top5_bar(df, title, color):
+        if df.empty:
+            st.info(f"No data: {title}")
+            return
+        ts = df.groupby("subreddit")["score"].sum().nlargest(5).reset_index()
+        fig = px.bar(ts, x="score", y="subreddit", orientation="h",
+                     title=title, color_discrete_sequence=[color],
+                     labels={"score":"Total Score","subreddit":""})
+        fig.update_layout(height=280, yaxis={"categoryorder":"total ascending"}, showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+
+    with ov_col_r4c:
+        top5_bar(ov_asia4_df, "Asia — Top 5 Subreddits",      "#1D9E75")
+    with ov_col_r4d:
+        top5_bar(ov_na4_df,   "N.America — Top 5 Subreddits", "#D85A30")
+
+    # ── Region Group Volume & Engagement (from Tab3) ────────────
+    st.markdown("<div class='section-header'>🌏 Region Group Post Volume & Engagement</div>",
+                unsafe_allow_html=True)
+    ov_region_agg = (filtered.groupby("region_group")
+                     .agg(post_count=("id","count"), avg_score=("score","mean"),
+                          total_score=("score","sum"), avg_comments=("num_comments","mean"))
+                     .reset_index())
+    ov_col_ra, ov_col_rb = st.columns(2)
+    with ov_col_ra:
+        fig_ov_r1 = px.bar(ov_region_agg.sort_values("post_count", ascending=False),
+                           x="region_group", y="post_count",
+                           color="avg_score", color_continuous_scale="Viridis",
+                           title="Post Count & Avg Score by Region Group",
+                           labels={"region_group":"Region Group","post_count":"Post Count","avg_score":"Avg Score"})
+        fig_ov_r1.update_layout(height=350, xaxis_tickangle=-15)
+        st.plotly_chart(fig_ov_r1, use_container_width=True)
+    with ov_col_rb:
+        fig_ov_r2 = px.scatter(ov_region_agg, x="avg_score", y="avg_comments",
+                               size="total_score", color="region_group",
+                               hover_name="region_group",
+                               title="Engagement by Region Group (Score vs Comments)",
+                               labels={"avg_score":"Avg Score","avg_comments":"Avg Comments",
+                                       "region_group":"Region Group"})
+        fig_ov_r2.update_layout(height=350)
+        st.plotly_chart(fig_ov_r2, use_container_width=True)
+
+    # ── Asia vs North America Top 10 (from Tab3) ───────────────
+    st.markdown("<div class='section-header'>🔍 Asia vs North America — Detailed Comparison (Top 10)</div>",
+                unsafe_allow_html=True)
+    ov_asia_df = filtered[filtered["region_group"] == "Asia-Pacific"]
+    ov_na_df   = filtered[filtered["region_group"] == "Western Markets (NA/EU)"]
+    ov_col_rc, ov_col_rd = st.columns(2)
+
+    def top_subs_chart(df, title):
+        if df.empty:
+            st.info(f"No data for this region group: {title}")
+            return
+        ts = df.groupby("subreddit")["score"].sum().nlargest(10).reset_index()
+        fig = px.bar(ts, x="score", y="subreddit", orientation="h",
+                     title=title, color="score", color_continuous_scale="Reds",
+                     labels={"score":"Total Score","subreddit":"Subreddit"})
+        fig.update_layout(height=350, yaxis={"categoryorder":"total ascending"})
+        st.plotly_chart(fig, use_container_width=True)
+
+    with ov_col_rc: top_subs_chart(ov_asia_df, "🌏 Asia-Pacific — Top 10 Subreddits")
+    with ov_col_rd: top_subs_chart(ov_na_df,   "🇺🇸 Western Markets — Top 10 Subreddits")
+
+    # ── Region × Subreddit Heatmap (from Tab3) ─────────────────
+    st.markdown("<div class='section-header'>🗺️ Region × Subreddit Activity Heatmap</div>",
+                unsafe_allow_html=True)
+    try:
+        ov_pivot = filtered.pivot_table(index="region_group", columns="subreddit",
+                                        values="score", aggfunc="sum", fill_value=0)
+        ov_top_cols = ov_pivot.sum().nlargest(20).index
+        ov_pivot    = ov_pivot[ov_top_cols]
+        fig_ov_heat = px.imshow(ov_pivot, color_continuous_scale="YlOrRd",
+                                title="Region × Subreddit Score Heatmap (Top 20 subreddits)",
+                                labels={"color":"Total Score"}, aspect="auto")
+        fig_ov_heat.update_layout(height=400)
+        st.plotly_chart(fig_ov_heat, use_container_width=True)
+    except Exception as e:
+        st.warning(f"Heatmap error: {e}")
+
 # ─────────────────────────────────────────
 st.markdown("---")
 st.caption(
-    f"🌿 Reddit Beauty Market Intelligence Dashboard v5.1 | "
+    f"🌿 Reddit Beauty Market Intelligence Dashboard v6.0 | "
     f"DB: {DB_PATH} | Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
 )

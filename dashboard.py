@@ -11,8 +11,6 @@ Changelog:
 import sqlite3
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import streamlit as st
 from datetime import datetime
 import os
@@ -303,6 +301,9 @@ st.markdown("<br>", unsafe_allow_html=True)
 # ─────────────────────────────────────────
 # 5. Tabs
 # ─────────────────────────────────────────
+# 탭 변수 할당 순서 (레이블 순서와 동일):
+# tab1=Trend, tab2=Ingredient, tab_voc=VOC, tab3=Regional,
+# tab5=MarketingPlaybook, tab4=RawData, tab6=Overview
 tab1, tab2, tab_voc, tab3, tab5, tab4, tab6 = st.tabs([
     "📊 Trend Dashboard",
     "🧪 Ingredient Keywords",
@@ -760,7 +761,6 @@ with tab3:
         ing_focus    = ing_df[ing_df["region_group"].isin(focus_groups)]
 
         if not ing_focus.empty:
-            col_ing1, = [st.columns(1)[0]]
             fig_ing = px.bar(ing_focus, x="ingredient", y="mentions", color="region_group",
                              barmode="group",
                              color_discrete_map={
@@ -1015,9 +1015,14 @@ with tab5:
         ].copy()
         st.markdown(f"**📊 Low-support posts** (Score≥50, Upvote<65%): {len(controversy)} posts")
         if not controversy.empty:
+            controversy_show = (controversy[["subreddit","title","score","upvote_ratio",
+                                             "num_comments","region_group","reddit_url"]]
+                                .sort_values("score", ascending=False).head(10).copy())
+            controversy_show["link"] = controversy_show["reddit_url"].apply(
+                lambda u: f"[↗ source]({u})" if u else "")
             st.dataframe(
-                controversy[["subreddit","title","score","upvote_ratio","num_comments","region_group"]]
-                .sort_values("score", ascending=False).head(10),
+                controversy_show[["subreddit","title","score","upvote_ratio","num_comments",
+                                  "region_group","link"]],
                 use_container_width=True, hide_index=True, height=280)
 
     with st.expander("🌍 Technique 6 — Climate Formula Marketing | Export conversion maximization",

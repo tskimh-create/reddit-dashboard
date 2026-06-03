@@ -9,6 +9,7 @@ Changelog:
   v5.1 - VOC/Technique post links / Regional tab new sections / LinkColumn
   v6.0 - Tab restructure: background sections → Overview / Data Source Context expander on all analysis tabs
   v6.1 - Sidebar card-style region group radio / Link bug fix (r/ prefix in fallback URL)
+  v6.2 - Bug fixes: URS scatter/IndexError/r-prefix display/data mutation/LinkColumn
 """
 
 import sqlite3
@@ -337,6 +338,7 @@ def get_display_region(region_val):
         return "N.America"
     return "Global"
 
+filtered = filtered.copy()  # 데이터 오염 방지
 filtered["region_display"] = filtered["region"].apply(get_display_region)
 
 # ─────────────────────────────────────────
@@ -411,7 +413,7 @@ with tab1:
         st.markdown(f"""
         <div class='post-card'>
             <div class='ptitle'>#{i+1} &nbsp; {title_html}</div>
-            <div class='pmeta'>r/{row['subreddit']} &nbsp;|&nbsp;
+            <div class='pmeta'>r/{str(row['subreddit']).removeprefix('r/')} &nbsp;|&nbsp;
                 Region: {row['region']} &nbsp;|&nbsp;
                 <span class='pscore'>⭐ {int(row['score']):,}</span> &nbsp;|&nbsp;
                 💬 {int(row['num_comments']):,} &nbsp;|&nbsp; 👍 {ratio_pct}
@@ -578,7 +580,7 @@ with tab_voc:
             st.markdown(f"""
             <div class='post-card'>
                 <div class='ptitle'>📌 {title_html}</div>
-                <div class='pmeta'>r/{row['subreddit']} &nbsp;|&nbsp;
+                <div class='pmeta'>r/{str(row['subreddit']).removeprefix('r/')} &nbsp;|&nbsp;
                     <span class='pscore'>⭐ {int(row['score']):,}</span>
                     &nbsp;|&nbsp; 💬 {int(row['num_comments']):,}
                     &nbsp;|&nbsp; 👍 {ratio_pct}
@@ -612,14 +614,20 @@ with tab_voc:
     complaint_df["Priority Score"] = (complaint_df["Mentions"] * complaint_df["Avg Score"]).round(0)
     col_u1, col_u2 = st.columns([3, 2])
     with col_u1:
-        fig_urs = px.scatter(complaint_df, x="Mentions", y="Avg Score",
-                             size="Priority Score", text="Complaint Type",
-                             color="Priority Score", color_continuous_scale="RdYlGn_r",
-                             title="URS Priority Matrix (bubble size = Priority Score)",
-                             labels={"Mentions":"Frequency (posts)","Avg Score":"Engagement (Avg Score)"})
-        fig_urs.update_traces(textposition="top center", textfont_size=9)
-        fig_urs.update_layout(height=420)
-        st.plotly_chart(fig_urs, use_container_width=True)
+        if complaint_df["Priority Score"].sum() == 0:
+            st.info("No complaint data in current filter — adjust filters to see the URS matrix.")
+        else:
+            # size 컬럼은 양수여야 함 — 0은 최솟값 1로 대체 (시각화 전용)
+            urs_plot = complaint_df.copy()
+            urs_plot["bubble_size"] = urs_plot["Priority Score"].clip(lower=1)
+            fig_urs = px.scatter(urs_plot, x="Mentions", y="Avg Score",
+                                 size="bubble_size", text="Complaint Type",
+                                 color="Priority Score", color_continuous_scale="RdYlGn_r",
+                                 title="URS Priority Matrix (bubble size = Priority Score)",
+                                 labels={"Mentions":"Frequency (posts)","Avg Score":"Engagement (Avg Score)"})
+            fig_urs.update_traces(textposition="top center", textfont_size=9)
+            fig_urs.update_layout(height=420)
+            st.plotly_chart(fig_urs, use_container_width=True)
     with col_u2:
         top_urs = (complaint_df.nlargest(5, "Priority Score")
                    [["Complaint Type","Mentions","Avg Score","Priority Score"]]
@@ -659,8 +667,9 @@ with tab3:
     st.markdown("<div class='section-header'>📈 Monthly Trend by Region Group</div>",
                 unsafe_allow_html=True)
 
-    filtered["ym"] = filtered["fetch_date"].dt.to_period("M").astype(str)
-    monthly_rg = (filtered.groupby(["ym","region_group"])
+    _tab3 = filtered.copy()  # 데이터 오염 방지
+    _tab3["ym"] = _tab3["fetch_date"].dt.to_period("M").astype(str)
+    monthly_rg = (_tab3.groupby(["ym","region_group"])
                   .size().reset_index(name="posts").sort_values("ym"))
 
     if not monthly_rg.empty:
@@ -720,8 +729,11 @@ with tab3:
                     "Asia-Pacific": a,
                     "Gap": f"+{diff}" if diff > 0 else str(diff)
                 })
-            cmp_df = pd.DataFrame(cmp_rows).sort_values("Global", ascending=False)
-            st.dataframe(cmp_df, use_container_width=True, hide_index=True, height=320)
+            if cmp_rows:
+                cmp_df = pd.DataFrame(cmp_rows).sort_values("Global", ascending=False)
+                st.dataframe(cmp_df, use_container_width=True, hide_index=True, height=320)
+            else:
+                st.info("No ingredient comparison data available for the current filter.")
 
         with col_t2:
             st.markdown("**🏆 Top 3 Ingredients by Region Group**")
@@ -814,7 +826,7 @@ with tab5:
                 st.markdown(f"""
                 <div class='post-card'>
                     <div class='ptitle'>💬 {title_html}</div>
-                    <div class='pmeta'>r/{row['subreddit']} &nbsp;|&nbsp; {row['region_group']}
+                    <div class='pmeta'>r/{str(row['subreddit']).removeprefix('r/')} &nbsp;|&nbsp; {row['region_group']}
                         &nbsp;|&nbsp; <span class='pscore'>⭐ {int(row['score']):,}</span>
                         &nbsp;|&nbsp; 👍 {row['upvote_ratio']*100:.0f}%
                         &nbsp;|&nbsp; 💬 {int(row['num_comments']):,}
@@ -949,7 +961,7 @@ with tab5:
             st.dataframe(
                 controversy_show[["subreddit","title","score","upvote_ratio","num_comments",
                                   "region_group","link"]],
-                column_config={"link": st.column_config.LinkColumn("🔗 Link", display_text="↗ Open")},
+                column_config={"link": st.column_config.LinkColumn("🔗 Link")},
                 use_container_width=True, hide_index=True, height=280)
 
     with st.expander("🌍 Technique 6 — Climate Formula Marketing | Export conversion maximization",
@@ -982,7 +994,7 @@ with tab5:
                       .agg(award_posts=("total_awards_received","count"),
                            total_awards=("total_awards_received","sum"),
                            total_score=("score","sum"), avg_score=("score","mean"),
-                           top_subreddit=("subreddit", lambda x: x.value_counts().index[0]))
+                           top_subreddit=("subreddit", lambda x: x.value_counts().index[0] if len(x.value_counts()) > 0 else ""))
                       .reset_index().sort_values("total_awards", ascending=False))
             col_k1, col_k2 = st.columns(2)
             with col_k1:
@@ -1064,7 +1076,7 @@ with tab5:
                     st.markdown(f"""
                     <div class='post-card' style='border-left-color:#ef4444'>
                         <div class='ptitle'>⚠️ {title_html}</div>
-                        <div class='pmeta'>r/{row['subreddit']} &nbsp;|&nbsp;
+                        <div class='pmeta'>r/{str(row['subreddit']).removeprefix('r/')} &nbsp;|&nbsp;
                             <span style='color:#ef4444;font-weight:700'>
                             ⭐ {int(row['score']):,} | 👍 {ratio_pct}</span>
                             {f'&nbsp;|&nbsp;<a href="{url}" target="_blank" style="font-size:.75rem;color:#718096;">source ↗</a>' if url else ''}
@@ -1099,7 +1111,7 @@ with tab5:
                 st.markdown(f"""
                 <div class='post-card' style='border-left-color:#f59e0b'>
                     <div class='ptitle'>🔥 {title_html}</div>
-                    <div class='pmeta'>r/{row['subreddit']} &nbsp;|&nbsp;
+                    <div class='pmeta'>r/{str(row['subreddit']).removeprefix('r/')} &nbsp;|&nbsp;
                         <span style='color:#f59e0b;font-weight:700'>
                         🔁 {int(row['num_crossposts'])} crossposts</span>
                         &nbsp;|&nbsp; ⭐ {int(row['score']):,}
@@ -1119,7 +1131,7 @@ with tab4:
     col_cfg = {}
     if "reddit_url" in filtered.columns:
         df_show["link"] = filtered["reddit_url"]
-        col_cfg["link"] = st.column_config.LinkColumn("🔗 Link", display_text="↗ Open")
+        col_cfg["link"] = st.column_config.LinkColumn("🔗 Link")
     st.dataframe(df_show, use_container_width=True, height=500, column_config=col_cfg)
     csv = filtered[cols_show].to_csv(index=False, encoding="utf-8-sig")
     st.download_button("⬇️ Download CSV", data=csv,
@@ -1161,7 +1173,7 @@ with tab6:
     sub_stat = (posts_df.groupby("subreddit")
                 .agg(posts=("id","count"), last_fetched=("fetch_date","max"),
                      avg_score=("score","mean"),
-                     region_group=("region_group", lambda x: x.value_counts().index[0]))
+                     region_group=("region_group", lambda x: x.value_counts().index[0] if len(x.value_counts()) > 0 else ""))
                 .reset_index().sort_values("posts", ascending=False))
     sub_stat["last_fetched"] = sub_stat["last_fetched"].dt.strftime("%Y-%m-%d")
     sub_stat["avg_score"]    = sub_stat["avg_score"].round(1)
@@ -1169,8 +1181,9 @@ with tab6:
 
     st.markdown("<div class='section-header'>📈 Collection Trend (Monthly)</div>",
                 unsafe_allow_html=True)
-    posts_df["ym"] = posts_df["fetch_date"].dt.to_period("M").astype(str)
-    monthly = (posts_df.groupby(["ym","fetch_type"]).size()
+    _ov = posts_df.copy()  # 캐시된 원본 보호
+    _ov["ym"] = _ov["fetch_date"].dt.to_period("M").astype(str)
+    monthly = (_ov.groupby(["ym","fetch_type"]).size()
                .reset_index(name="count").sort_values("ym"))
     if not monthly.empty:
         fig_tr = px.bar(monthly, x="ym", y="count", color="fetch_type", barmode="stack",
@@ -1358,6 +1371,6 @@ with tab6:
 # ─────────────────────────────────────────
 st.markdown("---")
 st.caption(
-    f"🌿 Reddit Beauty Market Intelligence Dashboard v6.1 | "
+    f"🌿 Reddit Beauty Market Intelligence Dashboard v6.2 | "
     f"DB: {DB_PATH} | Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
 )

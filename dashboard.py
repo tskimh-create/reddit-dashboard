@@ -148,6 +148,9 @@ def load_data():
 
 posts_df, keywords_df, meta_df = load_data()
 
+# 유저 프로필 페이지(r/u_ 형식) 제거 — 실제 서브레딧이 아님
+posts_df = posts_df[~posts_df["subreddit"].str.contains(r"^r/u_", na=False, regex=True)].copy()
+
 posts_df["fetch_date"] = pd.to_datetime(posts_df["fetch_date"], errors="coerce")
 posts_df["created_dt"] = pd.to_datetime(posts_df["created_utc"], unit="s", errors="coerce")
 
@@ -601,8 +604,8 @@ with tab3:
 
     filtered["region_display"] = filtered["region"].apply(get_display_region)
 
-    # ── 지역별 게시글 분포 ─────────────────────────────────────
-    st.markdown("<div class='section-header'>🌏 지역별 게시글 분포 (Post Distribution by Region)</div>",
+    # ── Post Distribution by Region ────────────────────────────
+    st.markdown("<div class='section-header'>🌏 Post Distribution by Region</div>",
                 unsafe_allow_html=True)
 
     region4_agg = (filtered.groupby("region_display")
@@ -618,7 +621,7 @@ with tab3:
     with col_r4a:
         fig_r4bar = px.bar(region4_agg, x="region_display", y="post_count",
                            color="avg_score", color_continuous_scale="Blues",
-                           title="지역별 게시글 수 & 평균 Score",
+                           title="Post Count & Avg Score by Region",
                            labels={"region_display":"Region","post_count":"Post Count","avg_score":"Avg Score"},
                            text="post_count")
         fig_r4bar.update_traces(textposition="outside")
@@ -630,14 +633,14 @@ with tab3:
                                size="total_score", color="region_display",
                                color_discrete_map=color_map4,
                                hover_name="region_display",
-                               title="지역별 참여도 비교 (Score vs Comments)",
-                               labels={"avg_score":"평균 Score","avg_comments":"평균 댓글",
+                               title="Engagement by Region (Score vs Comments)",
+                               labels={"avg_score":"Avg Score","avg_comments":"Avg Comments",
                                        "region_display":"Region","total_score":"Total Score"})
         fig_r4bub.update_layout(height=350)
         st.plotly_chart(fig_r4bub, use_container_width=True)
 
-    # ── 아시아 vs 북미 상세 비교 ───────────────────────────────
-    st.markdown("<div class='section-header'>🔍 아시아 vs 북미 상세 비교 (Top 5 Subreddits)</div>",
+    # ── Asia vs N.America Detailed Comparison ─────────────────
+    st.markdown("<div class='section-header'>🔍 Asia vs N.America — Detailed Comparison (Top 5 Subreddits)</div>",
                 unsafe_allow_html=True)
 
     asia4_df = filtered[filtered["region_display"] == "Asia"]
@@ -657,9 +660,9 @@ with tab3:
         st.plotly_chart(fig, use_container_width=True)
 
     with col_r4c:
-        top5_bar(asia4_df, "아시아 — 인기 서브레딧 Top 5", "#1D9E75")
+        top5_bar(asia4_df, "Asia — Top 5 Subreddits",      "#1D9E75")
     with col_r4d:
-        top5_bar(na4_df,   "북미 — 인기 서브레딧 Top 5",   "#D85A30")
+        top5_bar(na4_df,   "N.America — Top 5 Subreddits", "#D85A30")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -1018,11 +1021,11 @@ with tab5:
             controversy_show = (controversy[["subreddit","title","score","upvote_ratio",
                                              "num_comments","region_group","reddit_url"]]
                                 .sort_values("score", ascending=False).head(10).copy())
-            controversy_show["link"] = controversy_show["reddit_url"].apply(
-                lambda u: f"[↗ source]({u})" if u else "")
+            controversy_show["link"] = controversy_show["reddit_url"]
             st.dataframe(
                 controversy_show[["subreddit","title","score","upvote_ratio","num_comments",
                                   "region_group","link"]],
+                column_config={"link": st.column_config.LinkColumn("🔗 Link", display_text="↗ Open")},
                 use_container_width=True, hide_index=True, height=280)
 
     with st.expander("🌍 Technique 6 — Climate Formula Marketing | Export conversion maximization",
@@ -1189,9 +1192,11 @@ with tab4:
                  "region","region_group","fetch_type","fetch_date","author"]
     cols_show = [c for c in base_cols if c in filtered.columns]
     df_show   = filtered[cols_show].sort_values("score", ascending=False).copy()
+    col_cfg = {}
     if "reddit_url" in filtered.columns:
-        df_show["link"] = filtered["reddit_url"].apply(lambda u: f"[↗]({u})" if u else "")
-    st.dataframe(df_show, use_container_width=True, height=500)
+        df_show["link"] = filtered["reddit_url"]
+        col_cfg["link"] = st.column_config.LinkColumn("🔗 Link", display_text="↗ Open")
+    st.dataframe(df_show, use_container_width=True, height=500, column_config=col_cfg)
     csv = filtered[cols_show].to_csv(index=False, encoding="utf-8-sig")
     st.download_button("⬇️ Download CSV", data=csv,
                        file_name=f"reddit_beauty_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
@@ -1275,6 +1280,6 @@ with tab6:
 # ─────────────────────────────────────────
 st.markdown("---")
 st.caption(
-    f"🌿 Reddit Beauty Market Intelligence Dashboard v5.0 | "
+    f"🌿 Reddit Beauty Market Intelligence Dashboard v5.1 | "
     f"DB: {DB_PATH} | Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
 )

@@ -8,6 +8,7 @@ Changelog:
   v5.0 - Full English UI + Regional Ingredient Comparison section
   v5.1 - VOC/Technique post links / Regional tab new sections / LinkColumn
   v6.0 - Tab restructure: background sections → Overview / Data Source Context expander on all analysis tabs
+  v6.1 - Sidebar card-style region group radio / Link bug fix (r/ prefix in fallback URL)
 """
 
 import sqlite3
@@ -104,6 +105,32 @@ h1, h2, h3 { font-family: 'DM Serif Display', serif; }
 .urs-card .uc-title { font-weight: 600; font-size: 0.9rem; color: #1a1a2e; }
 .urs-card .uc-meta  { font-size: 0.78rem; color: #718096; margin-top: 3px; }
 .urs-card .uc-score { font-weight: 700; color: #e94560; }
+
+/* ── Region Group Card Radio (Sidebar) ── */
+div[data-testid="stSidebar"] div[data-testid="stRadio"][aria-label="region_group_radio"] > div {
+    gap: 4px;
+    flex-direction: column;
+}
+div[data-testid="stSidebar"] div[data-testid="stRadio"][aria-label="region_group_radio"] label {
+    background: #ffffff;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 8px 12px;
+    cursor: pointer;
+    width: 100%;
+    margin: 0 !important;
+    transition: border-color 0.15s, background 0.15s;
+    line-height: 1.4;
+}
+div[data-testid="stSidebar"] div[data-testid="stRadio"][aria-label="region_group_radio"] label:hover {
+    border-color: #185FA5;
+    background: #f0f6ff;
+}
+div[data-testid="stSidebar"] div[data-testid="stRadio"][aria-label="region_group_radio"] label[data-selected="true"] {
+    border-color: #185FA5 !important;
+    background: #e8f1fb !important;
+    font-weight: 600;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -170,6 +197,18 @@ REGION_GROUP_MAP = {
                                    "southeast", "singapore", "아시아", "태평양", "동남아", "인도", "싱가"],
 }
 
+# 사이드바 카드 표시용 — (한국어 레이블, 내부 키, 아이콘, 설명)
+REGION_CARDS = [
+    ("전체",                 "All",                       "🌐", "전체 수집 데이터"),
+    ("글로벌·범용",           "Global · General",         "🌍", "지역·피부 구분 없는 일반"),
+    ("글로벌·전문소비자",     "Global · Expert Consumer", "🔬", "성분·DIY·고관여·가성비 추구층"),
+    ("글로벌·특정타깃",       "Global · Specific Target", "🎯", "연령·소득·관심사 기반 세그먼트"),
+    ("글로벌·피부고민",       "Global · Skin Concerns",   "💆", "여드름·지성·호르몬 피부 중심"),
+    ("북미/유럽·오세아니아",  "Western Markets (NA/EU)",  "🌎", "북미·유럽·호주·캐나다 지역"),
+    ("아시아·태평양",         "Asia-Pacific",             "🌏", "아시아·인도·동남아·싱가포르"),
+    ("기타",                 "Uncategorized",             "📂", "분류되지 않은 데이터"),
+]
+
 def get_region_group(val):
     if pd.isna(val) or str(val).strip() == "":
         return "Uncategorized"
@@ -185,8 +224,11 @@ def make_reddit_url(row):
     pl = row.get("permalink", "")
     if pl and str(pl) not in ("", "nan", "None"):
         return f"https://www.reddit.com{pl}"
-    rid, sub = row.get("reddit_id", ""), row.get("subreddit", "")
-    return f"https://www.reddit.com/r/{sub}/comments/{rid}/" if rid and sub else ""
+    rid = row.get("reddit_id", "")
+    sub = str(row.get("subreddit", "")).strip()
+    # subreddit 컬럼이 "r/skincare" 형식으로 저장되어 있으므로 r/ 접두사 제거
+    sub_clean = sub[2:] if sub.startswith("r/") else sub
+    return f"https://www.reddit.com/r/{sub_clean}/comments/{rid}/" if rid and sub_clean else ""
 
 posts_df["reddit_url"] = posts_df.apply(make_reddit_url, axis=1)
 
@@ -238,17 +280,27 @@ else:
     sel_year = sel_month = None
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("**🌏 Region Group**")
-rg_opts   = ["All"] + list(REGION_GROUP_MAP.keys()) + ["Uncategorized"]
-sel_rgroup = st.sidebar.selectbox("Select region group", rg_opts, label_visibility="collapsed")
+st.sidebar.markdown("**🌏 지역 그룹**")
 
-if sel_rgroup != "All":
-    reg_in_grp = sorted(
-        posts_df[posts_df["region_group"] == sel_rgroup]["region"].dropna().unique().tolist())
-    reg_opts = ["All"] + reg_in_grp
-else:
-    reg_opts = ["All"] + sorted(posts_df["region"].dropna().unique().tolist())
-sel_region = st.sidebar.selectbox("└ Sub-region", reg_opts)
+# 그룹별 포스트 수 계산
+_rg_cnt = posts_df["region_group"].value_counts().to_dict()
+
+# 라디오 레이블 빌드 (아이콘 + 한국어명 + 게시글 수 + 설명)
+_rg_labels  = []
+_rg_key_map = {}  # label → internal key
+for kor, key, icon, desc in REGION_CARDS:
+    n = len(posts_df) if key == "All" else _rg_cnt.get(key, 0)
+    lbl = f"{icon} {kor} ({n:,}건)\n{desc}"
+    _rg_labels.append(lbl)
+    _rg_key_map[lbl] = key
+
+_sel_label = st.sidebar.radio(
+    "region_group_radio",
+    _rg_labels,
+    label_visibility="collapsed",
+    key="rg_radio",
+)
+sel_rgroup = _rg_key_map[_sel_label]
 
 st.sidebar.markdown("---")
 sub_opts  = ["All"] + sorted(posts_df["subreddit"].dropna().unique().tolist())
@@ -268,8 +320,6 @@ if period_mode == "Select Period" and sel_year:
         filtered = filtered[filtered["fetch_date"].dt.month == int(sel_month)]
 if sel_rgroup != "All":
     filtered = filtered[filtered["region_group"] == sel_rgroup]
-if sel_region != "All":
-    filtered = filtered[filtered["region"] == sel_region]
 if sel_sub != "All":
     filtered = filtered[filtered["subreddit"] == sel_sub]
 filtered = filtered[filtered["score"] >= min_score]
@@ -1308,6 +1358,48 @@ with tab6:
 # ─────────────────────────────────────────
 st.markdown("---")
 st.caption(
-    f"🌿 Reddit Beauty Market Intelligence Dashboard v6.0 | "
+    f"🌿 Reddit Beauty Market Intelligence Dashboard v6.1 | "
+    f"DB: {DB_PATH} | Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+)
+,
+                unsafe_allow_html=True)
+    ov_asia_df = filtered[filtered["region_group"] == "Asia-Pacific"]
+    ov_na_df   = filtered[filtered["region_group"] == "Western Markets (NA/EU)"]
+    ov_col_rc, ov_col_rd = st.columns(2)
+
+    def top_subs_chart(df, title):
+        if df.empty:
+            st.info(f"No data for this region group: {title}")
+            return
+        ts = df.groupby("subreddit")["score"].sum().nlargest(10).reset_index()
+        fig = px.bar(ts, x="score", y="subreddit", orientation="h",
+                     title=title, color="score", color_continuous_scale="Reds",
+                     labels={"score":"Total Score","subreddit":"Subreddit"})
+        fig.update_layout(height=350, yaxis={"categoryorder":"total ascending"})
+        st.plotly_chart(fig, use_container_width=True)
+
+    with ov_col_rc: top_subs_chart(ov_asia_df, "🌏 Asia-Pacific — Top 10 Subreddits")
+    with ov_col_rd: top_subs_chart(ov_na_df,   "🇺🇸 Western Markets — Top 10 Subreddits")
+
+    # ── Region × Subreddit Heatmap (from Tab3) ─────────────────
+    st.markdown("<div class='section-header'>🗺️ Region × Subreddit Activity Heatmap</div>",
+                unsafe_allow_html=True)
+    try:
+        ov_pivot = filtered.pivot_table(index="region_group", columns="subreddit",
+                                        values="score", aggfunc="sum", fill_value=0)
+        ov_top_cols = ov_pivot.sum().nlargest(20).index
+        ov_pivot    = ov_pivot[ov_top_cols]
+        fig_ov_heat = px.imshow(ov_pivot, color_continuous_scale="YlOrRd",
+                                title="Region × Subreddit Score Heatmap (Top 20 subreddits)",
+                                labels={"color":"Total Score"}, aspect="auto")
+        fig_ov_heat.update_layout(height=400)
+        st.plotly_chart(fig_ov_heat, use_container_width=True)
+    except Exception as e:
+        st.warning(f"Heatmap error: {e}")
+
+# ─────────────────────────────────────────
+st.markdown("---")
+st.caption(
+    f"🌿 Reddit Beauty Market Intelligence Dashboard v6.1 | "
     f"DB: {DB_PATH} | Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
 )

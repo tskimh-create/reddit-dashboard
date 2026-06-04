@@ -78,6 +78,19 @@ div[data-testid="stSidebar"] div[data-testid="stRadio"][aria-label="region_group
     line-height: 1.5;
     color: #4a5568;
 }
+/* ── Inner <p> element: pre-wrap to honor \n line break ── */
+div[data-testid="stSidebar"] div[data-testid="stRadio"][aria-label="region_group_radio"] label p {
+    white-space: pre-wrap;
+    margin: 0;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: #4a5568;
+}
+div[data-testid="stSidebar"] div[data-testid="stRadio"][aria-label="region_group_radio"] label p::first-line {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #1a202c;
+}
 /* ── First line: large bold title ── */
 div[data-testid="stSidebar"] div[data-testid="stRadio"][aria-label="region_group_radio"] label::first-line {
     font-size: 0.95rem;

@@ -206,7 +206,7 @@ def build_sidebar(posts_df):
         n     = len(posts_df) if key == "All" else _rg_cnt.get(key, 0)
         # Line 1 (large bold via ::first-line CSS): icon + name
         # Line 2 (small muted): post count · description
-        label = f"{icon} {lbl}\n{n:,} posts  ·  {desc}"
+        label = f"{icon} {lbl}  \n{n:,} posts  ·  {desc}"
         _rg_labels.append(label)
         _rg_key_map[label] = key
 

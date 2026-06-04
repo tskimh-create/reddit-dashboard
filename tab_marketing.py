@@ -11,9 +11,7 @@ import streamlit as st
 
 from config import (
     COMPLAINT_DICT, REGION_GROUP_MAP, REGION_ING_DICT,
-    KEYWORD_CATEGORY_MAP, KEYWORD_NAME_MAP,
 )
-from tab_analysis import _normalize_keywords
 
 
 # ───────────────────────────────────────────────────────────────────
@@ -169,8 +167,7 @@ def render_tab_marketing(filtered, posts_df, keywords_df):
         if keywords_df.empty:
             st.warning("keyword_hits data required. Run `keyword_matcher.py` first.")
         else:
-            # Apply Korean→English normalization via shared helper
-            kw_trend = _normalize_keywords(keywords_df)
+            kw_trend = keywords_df.copy()
             kw_trend["weighted_index"] = (
                 kw_trend["score"] *
                 kw_trend["upvote_ratio"].fillna(0.75) *

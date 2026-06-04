@@ -12,37 +12,9 @@ import streamlit as st
 from config import (
     COMPLAINT_DICT, IMPROVEMENT_DICT,
     PAIN_DICT, POSITIVE_DICT, REGION_GROUP_MAP, REGION_ING_DICT,
-    KEYWORD_CATEGORY_MAP, KEYWORD_NAME_MAP,
 )
 from data_loader import calc_region_ingredients, get_region_group
 
-
-def _normalize_keywords(keywords_df):
-    """
-    Map Korean keyword names and categories to English.
-    Strips whitespace first to handle DB values with leading/trailing spaces.
-    Uses a fallback loop for any remaining unmapped Korean-only strings.
-    """
-    if keywords_df.empty:
-        return keywords_df
-    kw = keywords_df.copy()
-
-    # Strip + exact replace
-    kw["keyword"]          = kw["keyword"].str.strip().replace(KEYWORD_NAME_MAP)
-    kw["keyword_category"] = kw["keyword_category"].str.strip().replace(KEYWORD_CATEGORY_MAP)
-
-    # Fallback: any remaining value that is ALL non-ASCII (pure Korean) → keep as-is
-    # but attempt a normalised match (lower, no spaces) against the map keys
-    _cat_map_norm = {k.replace(" ", "").lower(): v for k, v in KEYWORD_CATEGORY_MAP.items()}
-    _kw_map_norm  = {k.replace(" ", "").lower(): v for k, v in KEYWORD_NAME_MAP.items()}
-
-    def _safe_map(val, norm_map):
-        norm_key = str(val).replace(" ", "").lower()
-        return norm_map.get(norm_key, val)
-
-    kw["keyword"]          = kw["keyword"].apply(lambda v: _safe_map(v, _kw_map_norm))
-    kw["keyword_category"] = kw["keyword_category"].apply(lambda v: _safe_map(v, _cat_map_norm))
-    return kw
 
 
 # ───────────────────────────────────────────────────────────────────
@@ -272,9 +244,6 @@ def render_tab_ingredient(filtered, posts_df, keywords_df):
       5. Regional Ingredient Comparison
       6. Climate Formula Map (region × category heatmap)
     """
-
-    # ── Apply Korean→English normalization (name + category) ─────
-    keywords_df = _normalize_keywords(keywords_df)
 
     # ── 1 & 2 & 3. Ingredient Rankings (keyword_hits) ────────────
     st.markdown(

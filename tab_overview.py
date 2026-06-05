@@ -285,11 +285,4 @@ def render_tab_overview(filtered, posts_df, keywords_df, meta_df):
         mime="text/csv",
     )
 
-    # ── Subreddit Metadata (from subreddits_meta table) ──────────
-    if not meta_df.empty:
-        st.markdown(
-            "<div class='section-header'>📌 Subreddit Metadata</div>",
-            unsafe_allow_html=True,
-        )
-        st.dataframe(meta_df, use_container_width=True, height=300, hide_index=True)
 # ══ END SECTION: render_tab_overview ════════════════════════════════

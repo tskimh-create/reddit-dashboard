@@ -3,8 +3,7 @@
 # Reddit Beauty Market Intelligence Dashboard v7.0
 # ═══════════════════════════════════════════════════════════════════
 
-DB_PATH        = "reddit_data.db"
-GDRIVE_FILE_ID = "1-nuBg81wfomyeCoqvF6JMURzSCBWM9Fz"
+DB_PATH = "reddit_data.db"
 
 # ╔══════════════════════════════════════╗
 # ║  SECTION: CSS  [LOCKED v7]          ║

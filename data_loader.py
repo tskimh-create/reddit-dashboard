@@ -1,44 +1,34 @@
 # ═══════════════════════════════════════════════════════════════════
 # data_loader.py — DB loading, enrichment, sidebar, KPI cards
-# Reddit Beauty Market Intelligence Dashboard v7.0
+# Reddit Beauty Market Intelligence Dashboard v7.2
 # ═══════════════════════════════════════════════════════════════════
 
 import sqlite3
 import os
 
-import gdown
 import numpy as np
 import pandas as pd
 import streamlit as st
 
 from config import (
-    DB_PATH, GDRIVE_FILE_ID,
+    DB_PATH,
     REGION_GROUP_MAP, REGION_CARDS, REGION_ING_DICT,
 )
 
 # ╔══════════════════════════════════════╗
-# ║  SECTION: ensure_db  [LOCKED v7]    ║
+# ║  SECTION: ensure_db  [v7.2]         ║
 # ╚══════════════════════════════════════╝
 @st.cache_resource(show_spinner="📥 Loading database...")
 def ensure_db():
+    """DB is bundled in the GitHub repo — just verify it exists."""
     if not os.path.exists(DB_PATH):
-        try:
-            url = f"https://drive.google.com/uc?id={GDRIVE_FILE_ID}&export=download"
-            gdown.download(url, DB_PATH, quiet=False)
-        except Exception:
-            try:
-                url2 = f"https://drive.google.com/file/d/{GDRIVE_FILE_ID}/view"
-                gdown.download(url2, DB_PATH, quiet=False, fuzzy=True)
-            except Exception as e2:
-                st.error(f"""
-                ❌ DB download failed.
+        st.error(f"""
+        ❌ `{DB_PATH}` not found.
 
-                **Check:**
-                1. Google Drive sharing → 'Anyone with the link' (Viewer)
-                2. File ID is correct: `{GDRIVE_FILE_ID}`
-                3. Error detail: {e2}
-                """)
-                st.stop()
+        **Check:** `reddit_data.db` must be in the same folder as `dashboard.py`.
+        Run `reddit_import_json.py` locally, then `git push` to update.
+        """)
+        st.stop()
     return DB_PATH
 # ══ END SECTION: ensure_db ══════════════════════════════════════════
 
